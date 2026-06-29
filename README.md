@@ -31,8 +31,8 @@ For auto-discovery, copy or symlink this directory into a Pi extension/package l
 
 ## Commands
 
-- `/suggest-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
-- `/suggest-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
+- `/autocomplete-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
+- `/autocomplete-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
 
 ## Behavior
 

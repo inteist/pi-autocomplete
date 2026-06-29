@@ -129,8 +129,8 @@ export default function ghostVim(pi: ExtensionAPI): void {
     }
   });
 
-  pi.registerCommand("suggest-debug", {
-    description: "Toggle autocomplete suggestions debug logging (usage: /suggest-debug [on|off])",
+  pi.registerCommand("autocomplete-debug", {
+    description: "Toggle autocomplete debug logging (usage: /autocomplete-debug [on|off])",
     handler: async (args, ctx) => {
       const arg = args.trim().toLowerCase();
       if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) {
@@ -160,8 +160,8 @@ export default function ghostVim(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("suggest-check", {
-    description: "Check autocomplete suggestions Ollama connectivity and configured model",
+  pi.registerCommand("autocomplete-check", {
+    description: "Check autocomplete Ollama connectivity and configured model",
     handler: async (args, ctx) => {
       const config = readConfigFromEnv();
       ctx.ui.notify("pi-ghost-vim: checking Ollama...", "info");
