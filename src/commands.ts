@@ -1,7 +1,8 @@
 import type {
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionContext
 } from "@earendil-works/pi-coding-agent";
+import { getAcArgumentCompletions } from "./ac-completion.js";
 import {
   deleteModelAlias,
   getAliasesForModel,
@@ -9,25 +10,25 @@ import {
   loadAliases,
   resetAliasesForModel,
   saveAliases,
-  setModelAlias,
+  setModelAlias
 } from "./aliases.js";
 import { describePromptMode } from "./config.js";
 import {
   DEBUG_WIDGET_KEY,
   KNOWN_MODEL_PRESETS,
-  MODEL_SELECTION_ENTRY_TYPE,
+  MODEL_SELECTION_ENTRY_TYPE
 } from "./constants.js";
 import type { GhostVimWrapper } from "./editor-wrapper.js";
 import {
   formatAutocompleteModelStatus,
-  parseAutocompleteModelCommand,
+  parseAutocompleteModelCommand
 } from "./model-command.js";
-import { runOllamaCheck } from "./ollama.js";
+import { runOllamaStatus } from "./ollama.js";
 import type { DebugTraceDetails, GhostConfig } from "./types.js";
 import {
   clearGhostWidget,
-  printOllamaCheckOutput,
-  setGhostWidget,
+  printOllamaStatusOutput,
+  setGhostWidget
 } from "./ui.js";
 
 export type DebugState = {
@@ -43,7 +44,7 @@ export type RegisterAutocompleteCommandsOptions = {
   emitDebug?: (
     ctx: ExtensionContext,
     message: string,
-    details?: DebugTraceDetails,
+    details?: DebugTraceDetails
   ) => void;
   onDebugStateChanged?: (enabled: boolean) => void;
 };
@@ -56,7 +57,7 @@ export function registerAutocompleteCommands({
   wrappers,
   debugState,
   emitDebug,
-  onDebugStateChanged,
+  onDebugStateChanged
 }: RegisterAutocompleteCommandsOptions): void {
   loadAliases();
 
@@ -69,15 +70,15 @@ export function registerAutocompleteCommands({
         "Subcommands:",
         "  /ac model [<model>] [<mode>]  Change model & prompt mode (auto|qwen-fim|instruct)",
         "  /ac model list                Display all supported models, presets & aliases as a report",
-        "  /ac check                     Verify Ollama connection and check active model",
+        "  /ac status                    Verify Ollama connection and report active model",
         "  /ac debug [on|off]            Toggle debug widget and JSONL file tracing",
         "  /ac alias add <model> <alias> Add a custom alias for a model",
         "  /ac alias list [<model>]      List aliases for a model (or all aliases if omitted)",
         "  /ac alias delete <model> <alias> Delete a specific alias for a model",
         "  /ac alias reset <model>       Delete all aliases for a model",
-        "  /ac help                      Show this help message",
+        "  /ac help                      Show this help message"
       ].join("\n"),
-      "info",
+      "info"
     );
   };
 
@@ -96,7 +97,7 @@ export function registerAutocompleteCommands({
     } else {
       ctx.ui.notify(
         "Invalid argument for debug. Usage: /ac debug [on|off]",
-        "warning",
+        "warning"
       );
       return;
     }
@@ -105,7 +106,7 @@ export function registerAutocompleteCommands({
       emitDebug?.(ctx, "debug: disabled", {
         event: "debug-disabled",
         traceFile: config.debugTraceFile,
-        fileOnly: true,
+        fileOnly: true
       });
       debugState.enabled = false;
       debugState.history.length = 0;
@@ -120,7 +121,7 @@ export function registerAutocompleteCommands({
     emitDebug?.(ctx, "debug: enabled", {
       event: "debug-enabled",
       traceFile: config.debugTraceFile,
-      fileOnly: true,
+      fileOnly: true
     });
     setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
       "pi-ghost-vim debug enabled",
@@ -128,12 +129,15 @@ export function registerAutocompleteCommands({
       `url=${config.ollamaUrl}`,
       `model=${config.model}`,
       `prompt=${describePromptMode(config)}`,
-      `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`,
+      `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`
     ]);
     onDebugStateChanged?.(true);
     ctx.ui.notify(
-      [`pi-ghost-vim debug enabled`, `trace file: ${config.debugTraceFile}`].join("\n"),
-      "info",
+      [
+        `pi-ghost-vim debug enabled`,
+        `trace file: ${config.debugTraceFile}`
+      ].join("\n"),
+      "info"
     );
   };
 
@@ -147,10 +151,10 @@ export function registerAutocompleteCommands({
         (preset) =>
           `• ${preset.model} (${preset.label})
   - Mode: ${preset.promptMode}
-  - Run: ${preset.runCommand}`,
+  - Run: ${preset.runCommand}`
       ),
       "",
-      "--- Configured Aliases ---",
+      "--- Configured Aliases ---"
     ];
 
     const aliasEntries = getCustomAliasEntries();
@@ -165,7 +169,7 @@ export function registerAutocompleteCommands({
       }
     } else {
       lines.push(
-        "No custom aliases defined. Add one using: /ac alias add <model> <alias>",
+        "No custom aliases defined. Add one using: /ac alias add <model> <alias>"
       );
     }
 
@@ -176,7 +180,7 @@ export function registerAutocompleteCommands({
 
     lines.push("");
     lines.push(
-      "You can pass any Ollama model name to `/ac model <model_name>`.",
+      "You can pass any Ollama model name to `/ac model <model_name>`."
     );
     return lines;
   };
@@ -204,7 +208,7 @@ export function registerAutocompleteCommands({
     pi.appendEntry(MODEL_SELECTION_ENTRY_TYPE, {
       model: config.model,
       promptMode: config.promptMode,
-      updatedAt: Date.now(),
+      updatedAt: Date.now()
     });
 
     for (const wrapper of wrappers) wrapper.handleConfigChanged();
@@ -215,9 +219,9 @@ export function registerAutocompleteCommands({
         `model: ${config.model}`,
         `prompt mode: ${describePromptMode(config)}`,
         `run command: ollama run ${config.model}`,
-        "Use /ac check to validate it.",
+        "Use /ac status to validate it."
       ].join("\n"),
-      "info",
+      "info"
     );
   };
 
@@ -232,9 +236,9 @@ export function registerAutocompleteCommands({
           "  /ac alias add <model> <alias>",
           "  /ac alias list [<model>]",
           "  /ac alias delete <model> <alias>",
-          "  /ac alias reset <model>",
+          "  /ac alias reset <model>"
         ].join("\n"),
-        "warning",
+        "warning"
       );
       return;
     }
@@ -261,7 +265,7 @@ export function registerAutocompleteCommands({
             ctx.ui.notify(
               `Aliases for ${model}:
 ${aliases.map((a) => `  • ${a}`).join("\n")}`,
-              "info",
+              "info"
             );
           } else {
             ctx.ui.notify(`No aliases found for model: ${model}`, "info");
@@ -298,12 +302,12 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
           saveAliases();
           ctx.ui.notify(
             `Alias deleted: ${aliasToDelete} for model ${existingModel}`,
-            "info",
+            "info"
           );
         } else {
           ctx.ui.notify(
             `No custom alias '${aliasToDelete}' found mapping to model '${model}'`,
-            "warning",
+            "warning"
           );
         }
         break;
@@ -320,12 +324,12 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
           saveAliases();
           ctx.ui.notify(
             `Deleted all ${count} aliases for model: ${modelToReset}`,
-            "info",
+            "info"
           );
         } else {
           ctx.ui.notify(
             `No custom aliases found for model: ${modelToReset}`,
-            "info",
+            "info"
           );
         }
         break;
@@ -334,21 +338,22 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
       default:
         ctx.ui.notify(
           `Unknown alias action: ${action}. Supported: add, list, delete, reset`,
-          "warning",
+          "warning"
         );
         break;
     }
   };
 
-  const handleAcCheck: CommandHandler = async (args, ctx) => {
-    ctx.ui.notify("pi-ghost-vim: checking Ollama...", "info");
-    const result = await runOllamaCheck(config, args.trim());
-    printOllamaCheckOutput(ctx, result);
+  const handleAcStatus: CommandHandler = async (args, ctx) => {
+    ctx.ui.notify("pi-ghost-vim: checking Ollama status...", "info");
+    const result = await runOllamaStatus(config, args.trim());
+    printOllamaStatusOutput(ctx, result);
   };
 
   pi.registerCommand("ac", {
     description:
-      "Autocomplete commands. Usage: /ac [model|check|debug|alias|help]",
+      "Autocomplete commands. Usage: /ac [model|status|debug|alias|help]",
+    getArgumentCompletions: getAcArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       if (!trimmed) {
@@ -364,8 +369,8 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
         case "model":
           await handleAcModel(subcommandArgs, ctx);
           break;
-        case "check":
-          await handleAcCheck(subcommandArgs, ctx);
+        case "status":
+          await handleAcStatus(subcommandArgs, ctx);
           break;
         case "debug":
           await handleAcDebug(subcommandArgs, ctx);
@@ -378,6 +383,6 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
           showAcHelp(ctx);
           break;
       }
-    },
+    }
   });
 }

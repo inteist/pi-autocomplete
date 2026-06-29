@@ -9,7 +9,7 @@ type WidgetCapableUi = ExtensionContext["ui"] & {
   setStatus?: (key: string, value: string | undefined) => void;
 };
 
-export function printOllamaCheckOutput(
+export function printOllamaStatusOutput(
   ctx: ExtensionContext,
   result: { ok: boolean; lines: string[] },
 ): void {

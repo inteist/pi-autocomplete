@@ -341,7 +341,7 @@ function formatOllamaMetrics(metrics: Record<string, unknown>): string {
 }
 
 /**
- * Diagnostic function executed by the `/ac check` command.
+ * Diagnostic function executed by the `/ac status` command.
  * It:
  * 1. Checks connectivity to the local Ollama API tags endpoint.
  * 2. Validates that the configured model is installed (pulled) locally in Ollama.
@@ -352,12 +352,12 @@ function formatOllamaMetrics(metrics: Record<string, unknown>): string {
  * @param promptArg An optional custom prompt override for the test generation.
  * @returns An object with diagnostic success boolean and status lines to be shown to the user.
  */
-export async function runOllamaCheck(
+export async function runOllamaStatus(
   config: GhostConfig,
   promptArg: string,
 ): Promise<{ ok: boolean; lines: string[] }> {
   const lines = [
-    "pi-ghost-vim Ollama check",
+    "pi-ghost-vim Ollama status",
     `url: ${config.ollamaUrl}`,
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,

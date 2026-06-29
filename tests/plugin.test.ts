@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+
 import ghostVim from "../src/index.js";
 
 type RegisteredCommand = {
   description?: string;
+  getArgumentCompletions?: (prefix: string) => AutocompleteItem[] | null;
   handler: (args: string, ctx: MockContext) => void | Promise<void>;
 };
 
@@ -250,6 +253,72 @@ test("/ac debug toggles the debug widget and validates arguments", async () => {
     assert.equal(lastNotification(ctx).message, "pi-ghost-vim debug disabled");
     assert.equal(ctx.ui.widgets.at(-1)?.key, "pi-ghost-vim-debug");
     assert.equal(ctx.ui.widgets.at(-1)?.value, undefined);
+  } finally {
+    cleanupTempAgentDir(dir);
+  }
+});
+
+test("/ac getArgumentCompletions returns expected suggestions", async () => {
+  const dir = useTempAgentDir();
+  try {
+    const { pi, commands } = createMockPi();
+    ghostVim(pi as never);
+
+    const command = getAcCommand(commands);
+    assert.ok(command.getArgumentCompletions, "expected getArgumentCompletions to be defined");
+
+    // 1. Root /ac suggestions
+    const rootCompletions = command.getArgumentCompletions("");
+    assert.ok(rootCompletions);
+    const rootValues = rootCompletions.map((c) => c.value);
+    assert.deepEqual(rootValues, ["model", "status", "debug", "alias", "help"]);
+
+    // 2. Partial subcommand
+    const partialSub = command.getArgumentCompletions("mo");
+    assert.ok(partialSub);
+    assert.deepEqual(partialSub.map((c) => c.value), ["model"]);
+
+    // 3. /ac model suggestions
+    const modelCompletions = command.getArgumentCompletions("model ");
+    assert.ok(modelCompletions);
+    const modelValues = modelCompletions.map((c) => c.value);
+    assert.ok(modelValues.includes("model list"));
+    assert.ok(modelValues.includes("model qwen2.5-coder:1.5b"));
+    assert.ok(modelValues.includes("model qwen"));
+    assert.ok(modelValues.includes("model gemma"));
+
+    // 4. /ac model with partial
+    const modelPartial = command.getArgumentCompletions("model qw");
+    assert.ok(modelPartial);
+    assert.deepEqual(modelPartial.map((c) => c.value), ["model qwen2.5-coder:1.5b", "model qwen"]);
+
+    // 5. /ac model mode suggestions
+    const modeCompletions = command.getArgumentCompletions("model qwen ");
+    assert.ok(modeCompletions);
+    assert.deepEqual(modeCompletions.map((c) => c.value), ["model qwen auto", "model qwen qwen-fim", "model qwen instruct"]);
+
+    // 6. /ac debug suggestions
+    const debugCompletions = command.getArgumentCompletions("debug o");
+    assert.ok(debugCompletions);
+    assert.deepEqual(debugCompletions.map((c) => c.value), ["debug on", "debug off"]);
+
+    // 7. /ac alias suggestions
+    const aliasCompletions = command.getArgumentCompletions("alias ");
+    assert.ok(aliasCompletions);
+    assert.deepEqual(aliasCompletions.map((c) => c.value), ["alias add", "alias list", "alias delete", "alias reset"]);
+
+    // 8. Custom alias deletion autocomplete
+    const ctx = createMockContext();
+    await command.handler("alias add starcoder2:3b my-star", ctx);
+
+    const deleteModelCompletions = command.getArgumentCompletions("alias delete ");
+    assert.ok(deleteModelCompletions);
+    assert.deepEqual(deleteModelCompletions.map((c) => c.value), ["alias delete starcoder2:3b"]);
+
+    const deleteAliasCompletions = command.getArgumentCompletions("alias delete starcoder2:3b ");
+    assert.ok(deleteAliasCompletions);
+    assert.deepEqual(deleteAliasCompletions.map((c) => c.value), ["alias delete starcoder2:3b my-star"]);
+
   } finally {
     cleanupTempAgentDir(dir);
   }

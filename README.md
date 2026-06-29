@@ -42,7 +42,7 @@ Primary command namespace:
 - `/ac model qwen2.5-coder:1.5b` - switches back to Qwen coder using FIM prompting.
 - `/ac model [model] [auto|qwen-fim|instruct]` - sets model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
 - `/ac model list` - shows supported model presets plus configured/default aliases.
-- `/ac check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
+- `/ac status` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default diagnostic prompt.
 - `/ac debug [on|off]` - toggles a below-editor debug widget and JSONL file tracing showing why predictions are skipped, requested, dropped, or shown.
 - `/ac alias add <model> <alias>` - adds a custom model alias.
 - `/ac alias list [<model>]` - lists custom/default aliases.
