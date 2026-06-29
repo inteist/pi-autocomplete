@@ -994,12 +994,35 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-function cleanupPrediction(s: string): string {
-  return s
-    .replace(/\r/g, "")
-    .replace(/^\s*\n+/, "")
-    .replace(/[ \t]+$/g, "")
-    .slice(0, 500);
+const PREDICTION_LABEL_RE = /^[ \t]*(?:Continuation:|Suggested continuation:|Output:)\s*/i;
+
+function cleanupPrediction(text: string): string {
+  let cleaned = text.replace(/\r/g, "");
+
+  for (let i = 0; i < 2; i += 1) {
+    cleaned = stripPredictionWrapper(
+      cleaned
+        .replace(/^(?:[ \t]*\n)+/, "")
+        .replace(PREDICTION_LABEL_RE, "")
+        .replace(/[ \t]+$/gm, "")
+        .replace(/(?:\n[ \t]*)+$/, ""),
+    );
+  }
+
+  return cleaned.slice(0, 500);
+}
+
+function stripPredictionWrapper(text: string): string {
+  const fenced = text.match(/^[ \t]*```[^\n`]*\n([\s\S]*?)\n?```[ \t]*$/);
+  if (fenced) return fenced[1] ?? "";
+
+  const inlineFence = text.match(/^[ \t]*```([\s\S]*?)```[ \t]*$/);
+  if (inlineFence) return inlineFence[1] ?? "";
+
+  const quoted = text.match(/^[ \t]*(["'`])([\s\S]*?)\1[ \t]*$/);
+  if (quoted) return quoted[2] ?? "";
+
+  return text;
 }
 
 function takeNextChunk(s: string): { take: string; rest: string } {
