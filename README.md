@@ -29,6 +29,11 @@ pi -e pi-vim-mode -e /path/to/pi-ghost-vim/index.ts
 
 For auto-discovery, copy or symlink this directory into a Pi extension/package location, or use Pi package settings with the `pi.extensions` entry in `package.json`.
 
+## Commands
+
+- `/ghost-vim-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
+- `/ghost-vim-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
+
 ## Behavior
 
 - Insert mode only.
@@ -50,14 +55,16 @@ PI_GHOST_MODEL=qwen2.5-coder:1.5b
 PI_GHOST_OLLAMA_URL=http://127.0.0.1:11434
 PI_GHOST_KEEP_ALIVE=30m
 PI_GHOST_DEBOUNCE_MS=250
-PI_GHOST_TIMEOUT_MS=900
+PI_GHOST_TIMEOUT_MS=2500
+PI_GHOST_CHECK_TIMEOUT_MS=10000
 PI_GHOST_DOUBLE_TAB_MS=350
 PI_GHOST_MAX_TOKENS=48
 PI_GHOST_MAX_PREFIX_CHARS=2500
-PI_GHOST_MIN_CHARS=20
+PI_GHOST_MIN_CHARS=8
 PI_GHOST_INLINE=1
+PI_GHOST_DEBUG=0
 ```
 
 ## Notes
 
-This is intentionally a thin wrapper: pi-vim remains the source of truth for editing and modal behavior. The extension observes text, predicts after a pause, displays ghost text, and consumes `Tab` only when accepting a visible prediction.
+This is intentionally a thin wrapper: pi-vim remains the source of truth for editing and modal behavior. The extension observes text, predicts after a pause, displays ghost text, and consumes `Tab` only when accepting a visible prediction. It also forwards Pi `CustomEditor` action/shortcut hooks to the wrapped editor so shortcuts such as thinking-level bindings continue to work.

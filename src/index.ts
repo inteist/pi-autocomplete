@@ -20,6 +20,10 @@ import {
 const DEFAULT_MODEL = "qwen2.5-coder:1.5b";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_KEEP_ALIVE = "30m";
+const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
+
+const DEBUG_WIDGET_KEY = "pi-ghost-vim-debug";
+const GHOST_FACTORY_MARKER = Symbol.for("pi-ghost-vim.editorFactory");
 
 const SOFTWARE_CURSOR_START = "\x1b[7m";
 const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
@@ -30,11 +34,13 @@ type GhostConfig = {
   keepAlive: string;
   debounceMs: number;
   timeoutMs: number;
+  checkTimeoutMs: number;
   doubleTabMs: number;
   minChars: number;
   maxPrefixChars: number;
   maxTokens: number;
   inline: boolean;
+  debug: boolean;
 };
 
 type GhostState = {
@@ -45,6 +51,18 @@ type GhostState = {
 };
 
 type ModeProvider = () => string;
+type DebugLogger = (message: string) => void;
+type ActionHandler = () => void;
+type ExtensionShortcutHandler = (data: string) => boolean;
+type EditorFactory = (
+  tui: TUI,
+  theme: EditorTheme,
+  keybindings: KeybindingsManager,
+) => EditorComponent;
+type GhostEditorFactory = EditorFactory & {
+  [GHOST_FACTORY_MARKER]?: true;
+  previousFactory?: EditorFactory;
+};
 
 type GhostBaseEditor = EditorComponent &
   Partial<Focusable> & {
@@ -53,19 +71,43 @@ type GhostBaseEditor = EditorComponent &
     getCursor?: () => { line: number; col: number };
     getLines?: () => string[];
     isShowingAutocomplete?: () => boolean;
+    actionHandlers?: Map<string, ActionHandler>;
+    onEscape?: ActionHandler;
+    onCtrlD?: ActionHandler;
+    onPasteImage?: ActionHandler;
+    onExtensionShortcut?: ExtensionShortcutHandler;
   };
 
 type GhostWrapperOptions = {
   ctx: ExtensionContext;
   tui: TUI;
+  keybindings: KeybindingsManager;
   baseEditor: GhostBaseEditor;
   getExternalMode: ModeProvider;
   config: GhostConfig;
+  debug: DebugLogger;
 };
 
 export default function ghostVim(pi: ExtensionAPI): void {
   let vimMode = "insert";
+  let debugEnabled = envBool("PI_GHOST_DEBUG", false);
+  const debugHistory: string[] = [];
   const wrappers = new Set<GhostVimWrapper>();
+
+  const disposeWrappers = () => {
+    for (const wrapper of wrappers) wrapper.dispose();
+    wrappers.clear();
+  };
+
+  const debug = (ctx: ExtensionContext, message: string) => {
+    if (!debugEnabled) return;
+
+    const time = new Date().toLocaleTimeString();
+    const line = dimWithTheme(ctx, `[${time}] ${message}`);
+    debugHistory.push(line);
+    while (debugHistory.length > 8) debugHistory.shift();
+    setGhostWidget(ctx, DEBUG_WIDGET_KEY, debugHistory);
+  };
 
   const eventBus = (pi as ExtensionAPI & {
     events?: {
@@ -87,8 +129,55 @@ export default function ghostVim(pi: ExtensionAPI): void {
     }
   });
 
+  pi.registerCommand("ghost-vim-debug", {
+    description: "Toggle pi-ghost-vim debug logging (usage: /ghost-vim-debug [on|off])",
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+      if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) {
+        debugEnabled = true;
+      } else if (["off", "0", "false", "no", "disable", "disabled"].includes(arg)) {
+        debugEnabled = false;
+      } else {
+        debugEnabled = !debugEnabled;
+      }
+
+      if (!debugEnabled) {
+        debugHistory.length = 0;
+        clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
+        ctx.ui.notify("pi-ghost-vim debug disabled", "info");
+        return;
+      }
+
+      const config = readConfigFromEnv();
+      debugHistory.length = 0;
+      setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
+        "pi-ghost-vim debug enabled",
+        `url=${config.ollamaUrl}`,
+        `model=${config.model}`,
+        `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`,
+      ]);
+      ctx.ui.notify("pi-ghost-vim debug enabled", "info");
+    },
+  });
+
+  pi.registerCommand("ghost-vim-check", {
+    description: "Check pi-ghost-vim Ollama connectivity and configured model",
+    handler: async (args, ctx) => {
+      const config = readConfigFromEnv();
+      ctx.ui.notify("pi-ghost-vim: checking Ollama...", "info");
+      const result = await runOllamaCheck(config, args.trim());
+      setGhostWidget(ctx, DEBUG_WIDGET_KEY, result.lines);
+      ctx.ui.notify(
+        result.ok ? "pi-ghost-vim: Ollama check passed" : "pi-ghost-vim: Ollama check failed",
+        result.ok ? "info" : "warning",
+      );
+    },
+  });
+
   pi.on("session_start", (_event, ctx) => {
-    const previousFactory = ctx.ui.getEditorComponent?.();
+    disposeWrappers();
+    const currentFactory = ctx.ui.getEditorComponent?.() as EditorFactory | undefined;
+    const previousFactory = unwrapGhostFactory(currentFactory);
 
     if (!previousFactory) {
       ctx.ui.notify?.(
@@ -98,8 +187,10 @@ export default function ghostVim(pi: ExtensionAPI): void {
     }
 
     const config = readConfigFromEnv();
+    debugEnabled = debugEnabled || config.debug;
+    debug(ctx, `session_start model=${config.model} url=${config.ollamaUrl}`);
 
-    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+    const factory = ((tui, theme, keybindings) => {
       const baseEditor = previousFactory
         ? previousFactory(tui, theme, keybindings)
         : new CustomEditor(tui, theme, keybindings);
@@ -107,34 +198,50 @@ export default function ghostVim(pi: ExtensionAPI): void {
       const wrapper = new GhostVimWrapper({
         ctx,
         tui,
+        keybindings,
         baseEditor: baseEditor as GhostBaseEditor,
         getExternalMode: () => vimMode,
         config,
+        debug: (message) => debug(ctx, message),
       });
       wrappers.add(wrapper);
       return wrapper;
-    });
+    }) as GhostEditorFactory;
+
+    factory[GHOST_FACTORY_MARKER] = true;
+    factory.previousFactory = previousFactory;
+    ctx.ui.setEditorComponent(factory);
   });
 
-  pi.on("session_shutdown", () => {
-    for (const wrapper of wrappers) wrapper.dispose();
-    wrappers.clear();
+  pi.on("session_shutdown", (_event, ctx) => {
+    disposeWrappers();
+    clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
   });
 }
 
 class GhostVimWrapper implements EditorComponent, Focusable {
+  public readonly actionHandlers: Map<string, ActionHandler>;
+
   private ghost: GhostState | null = null;
   private lastTabAt = 0;
   private ownFocused = false;
   private disposed = false;
+  private _onEscape: ActionHandler | undefined;
+  private _onCtrlD: ActionHandler | undefined;
+  private _onPasteImage: ActionHandler | undefined;
+  private _onExtensionShortcut: ExtensionShortcutHandler | undefined;
   private readonly predictions: PredictionController;
 
   constructor(private readonly opts: GhostWrapperOptions) {
+    this.actionHandlers = new ForwardingActionHandlersMap(
+      () => this.opts.baseEditor.actionHandlers,
+    );
     this.predictions = new PredictionController({
       config: opts.config,
       predictor: new OllamaPredictor(opts.config),
       getText: () => this.getText(),
-      canShowPrediction: () => this.canShowGhostNow(),
+      getBlockReason: () => this.getPredictionBlockReason(),
+      debug: (message) => this.opts.debug(message),
       onPrediction: (ghost) => {
         this.ghost = ghost;
         this.showGhostPreview(ghost.text);
@@ -162,6 +269,42 @@ class GhostVimWrapper implements EditorComponent, Focusable {
 
   set wantsKeyRelease(value: boolean | undefined) {
     this.opts.baseEditor.wantsKeyRelease = value;
+  }
+
+  get onEscape(): ActionHandler | undefined {
+    return this._onEscape ?? this.opts.baseEditor.onEscape;
+  }
+
+  set onEscape(handler: ActionHandler | undefined) {
+    this._onEscape = handler;
+    this.opts.baseEditor.onEscape = handler;
+  }
+
+  get onCtrlD(): ActionHandler | undefined {
+    return this._onCtrlD ?? this.opts.baseEditor.onCtrlD;
+  }
+
+  set onCtrlD(handler: ActionHandler | undefined) {
+    this._onCtrlD = handler;
+    this.opts.baseEditor.onCtrlD = handler;
+  }
+
+  get onPasteImage(): ActionHandler | undefined {
+    return this._onPasteImage ?? this.opts.baseEditor.onPasteImage;
+  }
+
+  set onPasteImage(handler: ActionHandler | undefined) {
+    this._onPasteImage = handler;
+    this.opts.baseEditor.onPasteImage = handler;
+  }
+
+  get onExtensionShortcut(): ExtensionShortcutHandler | undefined {
+    return this._onExtensionShortcut ?? this.opts.baseEditor.onExtensionShortcut;
+  }
+
+  set onExtensionShortcut(handler: ExtensionShortcutHandler | undefined) {
+    this._onExtensionShortcut = handler;
+    this.opts.baseEditor.onExtensionShortcut = handler;
   }
 
   get onSubmit(): ((text: string) => void) | undefined {
@@ -315,11 +458,15 @@ class GhostVimWrapper implements EditorComponent, Focusable {
   }
 
   private canShowGhostNow(): boolean {
-    return (
-      this.isInsertMode() &&
-      this.isCursorAtEnd() &&
-      !this.isNativeAutocompleteShowing()
-    );
+    return this.getPredictionBlockReason() === null;
+  }
+
+  private getPredictionBlockReason(): string | null {
+    const mode = this.getMode();
+    if (mode !== "insert") return `mode=${mode}`;
+    if (!this.isCursorAtEnd()) return "cursor-not-at-end";
+    if (this.isNativeAutocompleteShowing()) return "native-autocomplete-open";
+    return null;
   }
 
   private hasValidGhost(): boolean {
@@ -363,6 +510,7 @@ class GhostVimWrapper implements EditorComponent, Focusable {
     const now = Date.now();
 
     if (now - this.lastTabAt <= this.opts.config.doubleTabMs) {
+      this.opts.debug("accept: whole ghost via double-tab");
       this.acceptWholeGhost();
       this.lastTabAt = 0;
       return;
@@ -379,6 +527,7 @@ class GhostVimWrapper implements EditorComponent, Focusable {
     if (!take) return this.ghost.text.length > 0;
 
     const nextText = this.getText() + take;
+    this.opts.debug(`accept: chunk ${take.length} chars, rest=${rest.length}`);
     this.setText(nextText);
 
     if (rest.length > 0) {
@@ -398,6 +547,7 @@ class GhostVimWrapper implements EditorComponent, Focusable {
   private acceptWholeGhost(): void {
     if (!this.ghost) return;
 
+    this.opts.debug(`accept: whole ${this.ghost.text.length} chars`);
     this.setText(this.getText() + this.ghost.text);
     this.clearGhost();
   }
@@ -458,11 +608,75 @@ class GhostVimWrapper implements EditorComponent, Focusable {
   }
 }
 
+class ForwardingActionHandlersMap extends Map<string, ActionHandler> {
+  constructor(private readonly getTarget: () => Map<string, ActionHandler> | undefined) {
+    super();
+  }
+
+  override set(key: string, value: ActionHandler): this {
+    super.set(key, value);
+    const target = this.getTarget();
+    if (target && target !== this) target.set(key, value);
+    return this;
+  }
+
+  override delete(key: string): boolean {
+    const deleted = super.delete(key);
+    const target = this.getTarget();
+    if (target && target !== this) target.delete(key);
+    return deleted;
+  }
+
+  override clear(): void {
+    super.clear();
+    const target = this.getTarget();
+    if (target && target !== this) target.clear();
+  }
+}
+
+function unwrapGhostFactory(factory: EditorFactory | undefined): EditorFactory | undefined {
+  const ghostFactory = factory as GhostEditorFactory | undefined;
+  if (ghostFactory?.[GHOST_FACTORY_MARKER]) return ghostFactory.previousFactory;
+  return factory;
+}
+
+type WidgetCapableUi = ExtensionContext["ui"] & {
+  setWidget?: (
+    key: string,
+    value: string[] | undefined,
+    options?: { placement?: string },
+  ) => void;
+  setStatus?: (key: string, value: string | undefined) => void;
+};
+
+function setGhostWidget(ctx: ExtensionContext, key: string, lines: string[]): void {
+  const ui = ctx.ui as WidgetCapableUi;
+  if (typeof ui.setWidget === "function") {
+    ui.setWidget(key, lines.length > 0 ? lines : undefined, {
+      placement: "belowEditor",
+    });
+    return;
+  }
+
+  ui.setStatus?.(key, lines[0]);
+}
+
+function clearGhostWidget(ctx: ExtensionContext, key: string): void {
+  const ui = ctx.ui as WidgetCapableUi;
+  ui.setWidget?.(key, undefined);
+  ui.setStatus?.(key, undefined);
+}
+
+function dimWithTheme(ctx: ExtensionContext, text: string): string {
+  return ctx.ui.theme?.fg?.("dim", text) ?? text;
+}
+
 type PredictionControllerOptions = {
   config: GhostConfig;
   predictor: OllamaPredictor;
   getText: () => string;
-  canShowPrediction: () => boolean;
+  getBlockReason: () => string | null;
+  debug: DebugLogger;
   onPrediction: (ghost: GhostState) => void;
 };
 
@@ -476,9 +690,24 @@ class PredictionController {
   schedule(baseText: string): void {
     const requestId = this.nextRequest();
 
-    if (shouldSuppressGhost(baseText, this.opts.config.minChars)) return;
-    if (!this.opts.canShowPrediction()) return;
+    const suppressionReason = getGhostSuppressionReason(
+      baseText,
+      this.opts.config.minChars,
+    );
+    if (suppressionReason) {
+      this.opts.debug(`skip #${requestId}: ${suppressionReason}`);
+      return;
+    }
 
+    const blockReason = this.opts.getBlockReason();
+    if (blockReason) {
+      this.opts.debug(`skip #${requestId}: ${blockReason}`);
+      return;
+    }
+
+    this.opts.debug(
+      `schedule #${requestId}: len=${baseText.length} in ${this.opts.config.debounceMs}ms`,
+    );
     this.debounce = setTimeout(() => {
       void this.runPrediction(baseText, requestId);
     }, this.opts.config.debounceMs);
@@ -510,24 +739,45 @@ class PredictionController {
     const controller = new AbortController();
     this.abort = controller;
 
+    const startedAt = Date.now();
     const timeout = setTimeout(() => controller.abort(), this.opts.config.timeoutMs);
 
     try {
+      this.opts.debug(`request #${requestId}: start`);
       const prediction = await this.opts.predictor.predict(baseText, controller.signal);
+      const elapsed = Date.now() - startedAt;
 
-      if (requestId !== this.requestId) return;
-      if (this.opts.getText() !== baseText) return;
-      if (!this.opts.canShowPrediction()) return;
-      if (!prediction.trim()) return;
+      if (requestId !== this.requestId) {
+        this.opts.debug(`drop #${requestId}: stale after ${elapsed}ms`);
+        return;
+      }
+      if (this.opts.getText() !== baseText) {
+        this.opts.debug(`drop #${requestId}: text changed after ${elapsed}ms`);
+        return;
+      }
+      const blockReason = this.opts.getBlockReason();
+      if (blockReason) {
+        this.opts.debug(`drop #${requestId}: ${blockReason} after ${elapsed}ms`);
+        return;
+      }
+      if (!prediction.trim()) {
+        this.opts.debug(`drop #${requestId}: empty response after ${elapsed}ms`);
+        return;
+      }
 
+      this.opts.debug(
+        `show #${requestId}: ${prediction.length} chars after ${elapsed}ms`,
+      );
       this.opts.onPrediction({
         baseText,
         text: prediction,
         requestId,
         createdAt: Date.now(),
       });
-    } catch {
-      // Silent failure is best for typing-time autocomplete.
+    } catch (error) {
+      const elapsed = Date.now() - startedAt;
+      this.opts.debug(`error #${requestId}: ${formatError(error)} after ${elapsed}ms`);
+      // Silent failure is best for typing-time autocomplete unless debug is enabled.
     } finally {
       clearTimeout(timeout);
       if (this.abort === controller) this.abort = null;
@@ -567,10 +817,145 @@ async function predictWithOllama(
     }),
   });
 
-  if (!res.ok) return "";
+  if (!res.ok) {
+    const body = await safeReadResponseText(res);
+    throw new Error(`Ollama HTTP ${res.status}: ${previewForLine(body, 160)}`);
+  }
 
   const json = (await res.json()) as { response?: string };
   return cleanupPrediction(json.response ?? "");
+}
+
+type OllamaTagsResponse = {
+  models?: Array<{ name?: unknown; model?: unknown }>;
+};
+
+type OllamaGenerateResponse = {
+  response?: unknown;
+  error?: unknown;
+};
+
+async function runOllamaCheck(
+  config: GhostConfig,
+  promptArg: string,
+): Promise<{ ok: boolean; lines: string[] }> {
+  const lines = [
+    "pi-ghost-vim Ollama check",
+    `url: ${config.ollamaUrl}`,
+    `model: ${config.model}`,
+    `generate timeout: ${config.checkTimeoutMs}ms`,
+  ];
+
+  try {
+    const tagsRes = await fetchWithTimeout(
+      `${config.ollamaUrl}/api/tags`,
+      { method: "GET" },
+      Math.min(config.checkTimeoutMs, 5_000),
+    );
+
+    if (!tagsRes.ok) {
+      lines.push(`tags: HTTP ${tagsRes.status} ${tagsRes.statusText}`);
+      lines.push(`tags body: ${previewForLine(await safeReadResponseText(tagsRes), 160)}`);
+    } else {
+      const tags = (await tagsRes.json()) as OllamaTagsResponse;
+      const modelNames = (tags.models ?? [])
+        .map((model) =>
+          typeof model.name === "string"
+            ? model.name
+            : typeof model.model === "string"
+              ? model.model
+              : "",
+        )
+        .filter(Boolean);
+      const modelFound = modelNames.includes(config.model);
+      lines.push(`tags: ok (${modelNames.length} model${modelNames.length === 1 ? "" : "s"})`);
+      lines.push(`configured model: ${modelFound ? "found" : "MISSING"}`);
+      if (!modelFound) lines.push(`pull it with: ollama pull ${config.model}`);
+    }
+  } catch (error) {
+    lines.push(`tags: ${formatError(error)}`);
+  }
+
+  const prompt = promptArg || "Return exactly: ready";
+  try {
+    const startedAt = Date.now();
+    const generateRes = await fetchWithTimeout(
+      `${config.ollamaUrl}/api/generate`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: config.model,
+          prompt,
+          stream: false,
+          keep_alive: config.keepAlive,
+          options: {
+            temperature: 0,
+            num_predict: Math.min(config.maxTokens, 24),
+            num_ctx: 2048,
+          },
+        }),
+      },
+      config.checkTimeoutMs,
+    );
+    const elapsed = Date.now() - startedAt;
+
+    if (!generateRes.ok) {
+      lines.push(
+        `generate: HTTP ${generateRes.status} ${generateRes.statusText} after ${elapsed}ms`,
+      );
+      lines.push(`generate body: ${previewForLine(await safeReadResponseText(generateRes), 240)}`);
+      return { ok: false, lines };
+    }
+
+    const json = (await generateRes.json()) as OllamaGenerateResponse;
+    if (typeof json.error === "string" && json.error.length > 0) {
+      lines.push(`generate: Ollama error after ${elapsed}ms`);
+      lines.push(`error: ${previewForLine(json.error, 240)}`);
+      return { ok: false, lines };
+    }
+
+    const response = typeof json.response === "string" ? json.response.trim() : "";
+    lines.push(`generate: ok after ${elapsed}ms`);
+    lines.push(`response: ${previewForLine(response || "(empty)", 240)}`);
+    return { ok: response.length > 0, lines };
+  } catch (error) {
+    lines.push(`generate: ${formatError(error)}`);
+    return { ok: false, lines };
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function safeReadResponseText(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch (error) {
+    return formatError(error);
+  }
+}
+
+function previewForLine(text: string, maxLength: number): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maxLength) return oneLine;
+  return `${oneLine.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
 }
 
 function cleanupPrediction(s: string): string {
@@ -597,14 +982,19 @@ function takeNextChunk(s: string): { take: string; rest: string } {
 }
 
 function shouldSuppressGhost(text: string, minChars: number): boolean {
-  const lastToken = text.split(/\s+/).at(-1) ?? "";
+  return getGhostSuppressionReason(text, minChars) !== null;
+}
 
-  return (
-    text.trim().length < minChars ||
-    lastToken.startsWith("/") ||
-    lastToken.startsWith("@") ||
-    text.endsWith("/")
-  );
+function getGhostSuppressionReason(text: string, minChars: number): string | null {
+  const trimmedLength = text.trim().length;
+  if (trimmedLength < minChars) return `min-chars ${trimmedLength}/${minChars}`;
+
+  const lastToken = text.split(/\s+/).at(-1) ?? "";
+  if (lastToken.startsWith("/")) return "slash-command-or-path-token";
+  if (lastToken.startsWith("@")) return "mention-token";
+  if (text.endsWith("/")) return "path-like-trailing-slash";
+
+  return null;
 }
 
 function injectGhostAfterCursor(
@@ -672,12 +1062,14 @@ function readConfigFromEnv(): GhostConfig {
     ),
     keepAlive: process.env.PI_GHOST_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE,
     debounceMs: envNumber("PI_GHOST_DEBOUNCE_MS", 250),
-    timeoutMs: envNumber("PI_GHOST_TIMEOUT_MS", 900),
+    timeoutMs: envNumber("PI_GHOST_TIMEOUT_MS", 2500),
+    checkTimeoutMs: envNumber("PI_GHOST_CHECK_TIMEOUT_MS", DEFAULT_CHECK_TIMEOUT_MS),
     doubleTabMs: envNumber("PI_GHOST_DOUBLE_TAB_MS", 350),
-    minChars: envNumber("PI_GHOST_MIN_CHARS", 20),
+    minChars: envNumber("PI_GHOST_MIN_CHARS", 8),
     maxPrefixChars: envNumber("PI_GHOST_MAX_PREFIX_CHARS", 2500),
     maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
     inline: envBool("PI_GHOST_INLINE", true),
+    debug: envBool("PI_GHOST_DEBUG", false),
   };
 }
 
