@@ -1,5 +1,6 @@
 import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
+import fs from "node:fs";
 import {
   DEFAULT_CHECK_TIMEOUT_MS,
   DEFAULT_KEEP_ALIVE,
@@ -14,6 +15,7 @@ import type {
   PromptMode,
   ResolvedPromptMode,
   StoredModelSelection,
+  PersistentConfig,
 } from "./types.js";
 
 export function describePromptMode(config: GhostConfig): string {
@@ -54,6 +56,50 @@ export function readPromptMode(value: string | undefined): PromptMode {
   return isPromptMode(mapped) ? mapped : DEFAULT_PROMPT_MODE;
 }
 
+export function getConfigFilepath(): string {
+  return path.join(getAgentDir(), "autocomplete-config.json");
+}
+
+export function loadPersistentConfig(): PersistentConfig {
+  try {
+    const filePath = getConfigFilepath();
+    if (!fs.existsSync(filePath)) return {};
+    const content = fs.readFileSync(filePath, "utf-8");
+    return JSON.parse(content) as PersistentConfig;
+  } catch {
+    return {};
+  }
+}
+
+export function writePersistentConfig(pConfig: PersistentConfig): void {
+  try {
+    const filePath = getConfigFilepath();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, JSON.stringify(pConfig, null, 2), "utf-8");
+  } catch {
+    // Ignore persistence failures
+  }
+}
+
+export function saveActiveModel(model: string, promptMode: PromptMode): void {
+  const pConfig = loadPersistentConfig();
+  pConfig.lastUsedModel = model;
+  pConfig.lastUsedPromptMode = promptMode;
+  writePersistentConfig(pConfig);
+}
+
+export function saveDefaultModel(model: string, promptMode: PromptMode): void {
+  const pConfig = loadPersistentConfig();
+  pConfig.defaultModel = model;
+  pConfig.defaultPromptMode = promptMode;
+  pConfig.lastUsedModel = model;
+  pConfig.lastUsedPromptMode = promptMode;
+  writePersistentConfig(pConfig);
+}
+
 /**
  * Helper to copy config settings from a source to a target object in place.
  * Mutating the object in place ensures wrappers holding the reference stay updated.
@@ -72,6 +118,7 @@ export function applyStoredModelSelection(
   if (!selection) return;
   config.model = selection.model;
   config.promptMode = selection.promptMode;
+  saveActiveModel(selection.model, selection.promptMode);
 }
 
 /**
@@ -120,13 +167,17 @@ export function parseStoredModelSelection(data: unknown): StoredModelSelection |
   };
 }
 
-/**
- * Loads default autocomplete configuration settings from environment variables.
- */
 export function readConfigFromEnv(): GhostConfig {
+  const pConfig = loadPersistentConfig();
+  const defaultModel = pConfig.defaultModel ?? process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL;
+  const defaultPromptMode = pConfig.defaultPromptMode ?? readPromptMode(process.env.PI_GHOST_PROMPT_MODE);
+
+  const model = pConfig.lastUsedModel ?? defaultModel;
+  const promptMode = pConfig.lastUsedPromptMode ?? defaultPromptMode;
+
   return {
-    model: process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL,
-    promptMode: readPromptMode(process.env.PI_GHOST_PROMPT_MODE),
+    model,
+    promptMode,
     ollamaUrl: normalizeBaseUrl(
       process.env.PI_GHOST_OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
     ),

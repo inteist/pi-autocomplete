@@ -1,5 +1,5 @@
-import { DEFAULT_PROMPT_MODE, KNOWN_MODEL_PRESETS } from "./constants.js";
-import { describePromptMode, isPromptMode, resolvePromptMode } from "./config.js";
+import { DEFAULT_MODEL, DEFAULT_PROMPT_MODE, KNOWN_MODEL_PRESETS } from "./constants.js";
+import { describePromptMode, isPromptMode, resolvePromptMode, loadPersistentConfig } from "./config.js";
 import { resolveModelAlias } from "./aliases.js";
 import { shouldUseRawGenerate } from "./ollama.js";
 import type { GhostConfig, PromptMode } from "./types.js";
@@ -8,7 +8,8 @@ export type AutocompleteModelCommandResult =
   | { action: "status" }
   | { action: "list" }
   | { action: "error"; message: string }
-  | { action: "set"; model: string; promptMode: PromptMode };
+  | { action: "set"; model: string; promptMode: PromptMode }
+  | { action: "default"; model: string; promptMode: PromptMode };
 
 /**
  * Parses user input arguments for the `/ac model` command.
@@ -18,6 +19,7 @@ export type AutocompleteModelCommandResult =
  * Command patterns supported:
  * - (empty / status / help) -> status
  * - list / ls / models / presets -> list presets
+ * - default [model] [promptMode] -> set default model and promptMode
  * - [model] [promptMode] -> set model and promptMode
  * - [promptMode] -> update promptMode only (keeps current model)
  *
@@ -38,6 +40,44 @@ export function parseAutocompleteModelCommand(
 
   if (["list", "ls", "models", "presets"].includes(lower)) {
     return { action: "list" };
+  }
+
+  if (lower === "default" || lower.startsWith("default ")) {
+    const defaultArgs = raw.slice("default".length).trim();
+    if (!defaultArgs) {
+      return {
+        action: "error",
+        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct]",
+      };
+    }
+
+    const parts = defaultArgs.split(/\s+/);
+    const last = parts.at(-1)?.toLowerCase();
+    let promptMode: PromptMode = DEFAULT_PROMPT_MODE;
+    let sawPromptMode = false;
+
+    if (last) {
+      const normalizedLast = last === "fim" ? "qwen-fim" : last;
+      if (isPromptMode(normalizedLast)) {
+        promptMode = normalizedLast;
+        sawPromptMode = true;
+        parts.pop();
+      }
+    }
+
+    const modelArg = parts.join(" ").trim();
+    if (!modelArg) {
+      return {
+        action: "error",
+        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct]",
+      };
+    }
+
+    return {
+      action: "default",
+      model: resolveModelAlias(modelArg),
+      promptMode,
+    };
   }
 
   const parts = raw.split(/\s+/);
@@ -79,15 +119,16 @@ export function parseAutocompleteModelCommand(
  * for presentation in the editor notification.
  */
 export function formatAutocompleteModelStatus(config: GhostConfig): string[] {
+  const pConfig = loadPersistentConfig();
+  const defaultModelStr = pConfig.defaultModel 
+    ? `${pConfig.defaultModel} (${pConfig.defaultPromptMode ?? "auto"})`
+    : `${process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL} (${process.env.PI_GHOST_PROMPT_MODE ?? DEFAULT_PROMPT_MODE})`;
+
   return [
     "pi-ghost-vim autocomplete model",
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,
-    `raw generate: ${shouldUseRawGenerate(resolvePromptMode(config), config.model) ? "yes" : "no"}`,
-    `debug trace file: ${config.debugTraceFile}`,
-    `run command: ollama run ${config.model}`,
-    "status: /ac model gemma4:e2b",
-    "modes: auto, qwen-fim, instruct",
+    `default model: ${defaultModelStr}`,
   ];
 }
 

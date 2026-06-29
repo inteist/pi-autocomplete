@@ -12,7 +12,7 @@ import {
   saveAliases,
   setModelAlias
 } from "./aliases.js";
-import { describePromptMode } from "./config.js";
+import { describePromptMode, saveActiveModel, saveDefaultModel } from "./config.js";
 import {
   DEBUG_WIDGET_KEY,
   KNOWN_MODEL_PRESETS,
@@ -69,6 +69,7 @@ export function registerAutocompleteCommands({
         "",
         "Subcommands:",
         "  /ac model [<model>] [<mode>]  Change model & prompt mode (auto|qwen-fim|instruct)",
+        "  /ac model default <model> [<mode>] Update default model & prompt mode",
         "  /ac model list                Display all supported models, presets & aliases as a report",
         "  /ac status                    Verify Ollama connection and report active model",
         "  /ac debug [on|off]            Toggle debug widget and JSONL file tracing",
@@ -203,8 +204,34 @@ export function registerAutocompleteCommands({
       return;
     }
 
+    if (result.action === "default") {
+      config.model = result.model;
+      config.promptMode = result.promptMode;
+      saveDefaultModel(result.model, result.promptMode);
+
+      pi.appendEntry(MODEL_SELECTION_ENTRY_TYPE, {
+        model: config.model,
+        promptMode: config.promptMode,
+        updatedAt: Date.now()
+      });
+
+      for (const wrapper of wrappers) wrapper.handleConfigChanged();
+
+      ctx.ui.notify(
+        [
+          "pi-ghost-vim default model updated",
+          `default model: ${config.model}`,
+          `prompt mode: ${describePromptMode(config)}`,
+        ].join("\n"),
+        "info"
+      );
+      return;
+    }
+
     config.model = result.model;
     config.promptMode = result.promptMode;
+    saveActiveModel(result.model, result.promptMode);
+
     pi.appendEntry(MODEL_SELECTION_ENTRY_TYPE, {
       model: config.model,
       promptMode: config.promptMode,

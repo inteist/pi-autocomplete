@@ -25,6 +25,8 @@ type MockContext = {
     setWidget: (key: string, value: string[] | undefined, options?: unknown) => void;
     setStatus: (key: string, value: string | undefined) => void;
     theme: { fg: (style: string, text: string) => string };
+    getEditorComponent?: () => unknown;
+    setEditorComponent?: (component: unknown) => void;
   };
   sessionManager: {
     getBranch: () => unknown[];
@@ -62,6 +64,7 @@ function createMockPi() {
 function createMockContext(): MockContext {
   const notifications: Notification[] = [];
   const widgets: WidgetUpdate[] = [];
+  let editorComponent: unknown = undefined;
 
   return {
     ui: {
@@ -78,6 +81,12 @@ function createMockContext(): MockContext {
       },
       theme: {
         fg: (_style: string, text: string) => text,
+      },
+      getEditorComponent() {
+        return editorComponent;
+      },
+      setEditorComponent(component: unknown) {
+        editorComponent = component;
       },
     },
     sessionManager: {
@@ -319,6 +328,39 @@ test("/ac getArgumentCompletions returns expected suggestions", async () => {
     assert.ok(deleteAliasCompletions);
     assert.deepEqual(deleteAliasCompletions.map((c) => c.value), ["alias delete starcoder2:3b my-star"]);
 
+  } finally {
+    cleanupTempAgentDir(dir);
+  }
+});
+
+test("/ac model default updates default model and last used model persists", async () => {
+  const dir = useTempAgentDir();
+  try {
+    const { pi, commands, sessionHandlers } = createMockPi();
+    ghostVim(pi as never);
+
+    const command = getAcCommand(commands);
+    const ctx = createMockContext();
+
+    // 1. Set default model
+    await command.handler("model default gemma", ctx);
+    assert.match(lastNotification(ctx).message, /default model: gemma4:e4b/);
+
+    // 2. Set active model to qwen
+    await command.handler("model qwen instruct", ctx);
+    assert.match(lastNotification(ctx).message, /model: qwen2\.5-coder:1\.5b/);
+
+    // 3. Trigger session_start to reload config
+    const handlers = sessionHandlers.get("session_start");
+    assert.ok(handlers);
+    for (const handler of handlers) {
+      handler(null, ctx);
+    }
+
+    // After session_start, config has been reloaded. Let's check status:
+    await command.handler("model", ctx);
+    assert.match(lastNotification(ctx).message, /model: qwen2\.5-coder:1\.5b/);
+    assert.match(lastNotification(ctx).message, /default model: gemma4:e4b/);
   } finally {
     cleanupTempAgentDir(dir);
   }

@@ -48,6 +48,13 @@ export type StoredModelSelection = {
   promptMode: PromptMode;
 };
 
+export type PersistentConfig = {
+  defaultModel?: string;
+  defaultPromptMode?: PromptMode;
+  lastUsedModel?: string;
+  lastUsedPromptMode?: PromptMode;
+};
+
 export type ModeProvider = () => string;
 export type DebugTraceDetails = Record<string, unknown> & {
   /**
