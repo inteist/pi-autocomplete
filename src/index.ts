@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
-
 import {
   CustomEditor,
   type ExtensionAPI,
@@ -20,28 +17,38 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 
+type PromptMode = "auto" | "qwen-fim" | "instruct";
+type ResolvedPromptMode = Exclude<PromptMode, "auto">;
+
+type KnownModelPreset = {
+  model: string;
+  label: string;
+  promptMode: ResolvedPromptMode;
+  runCommand: string;
+};
+
 const DEFAULT_MODEL = "qwen2.5-coder:1.5b";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_KEEP_ALIVE = "30m";
 const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
-const DEFAULT_SYSTEM_PROMPT = `You are an inline autocomplete engine for the Pi input box editor, where a developer is writing a prompt to an AI coding agent.
+const DEFAULT_PROMPT_MODE: PromptMode = "auto";
 
-Your job is autocomplete, not answering.
-
-Return only the missing continuation after the cursor.
-
-Good continuations are:
-- short: usually 3 to 20 words
-- specific and technically useful
-- written in the same style as the existing text
-- likely to be what the developer would type next
-- stopped at a natural pause
-
-Never include:
-- repeated text from the prompt
-- an answer to the request
-- explanations, greetings, labels, commentary, quotes, or markdown fences
-- bullets unless the user is already writing a list`;
+const MODEL_SELECTION_ENTRY_TYPE = "pi-ghost-vim-model";
+const PROMPT_MODES: readonly PromptMode[] = ["auto", "qwen-fim", "instruct"];
+const KNOWN_MODEL_PRESETS: readonly KnownModelPreset[] = [
+  {
+    model: "qwen2.5-coder:1.5b",
+    label: "Qwen Coder small (FIM)",
+    promptMode: "qwen-fim",
+    runCommand: "ollama run qwen2.5-coder:1.5b",
+  },
+  {
+    model: "gemma4:e2b",
+    label: "Gemma (instruction continuation)",
+    promptMode: "instruct",
+    runCommand: "ollama run gemma4:e2b",
+  },
+];
 
 const DEBUG_WIDGET_KEY = "pi-ghost-vim-debug";
 const GHOST_FACTORY_MARKER = Symbol.for("pi-ghost-vim.editorFactory");
@@ -51,6 +58,7 @@ const SOFTWARE_CURSOR_RESETS = ["\x1b[0m", "\x1b[27m"] as const;
 
 type GhostConfig = {
   model: string;
+  promptMode: PromptMode;
   ollamaUrl: string;
   keepAlive: string;
   debounceMs: number;
@@ -58,12 +66,9 @@ type GhostConfig = {
   checkTimeoutMs: number;
   doubleTabMs: number;
   minChars: number;
-  maxPrefixChars: number;
   maxTokens: number;
   inline: boolean;
   debug: boolean;
-  systemPrompt: string;
-  systemPromptSource: string;
 };
 
 type GhostState = {
@@ -114,6 +119,7 @@ type GhostWrapperOptions = {
 export default function ghostVim(pi: ExtensionAPI): void {
   let vimMode = "insert";
   let debugEnabled = envBool("PI_GHOST_DEBUG", false);
+  const config = readConfigFromEnv();
   const debugHistory: string[] = [];
   const wrappers = new Set<GhostVimWrapper>();
 
@@ -171,23 +177,65 @@ export default function ghostVim(pi: ExtensionAPI): void {
         return;
       }
 
-      const config = readConfigFromEnv();
       debugHistory.length = 0;
       setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
         "pi-ghost-vim debug enabled",
         `url=${config.ollamaUrl}`,
         `model=${config.model}`,
+        `prompt=${describePromptMode(config)}`,
         `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`,
-        `systemPrompt=${config.systemPromptSource} chars=${config.systemPrompt.length}`,
       ]);
       ctx.ui.notify("pi-ghost-vim debug enabled", "info");
+    },
+  });
+
+  pi.registerCommand("autocomplete-model", {
+    description:
+      "Show or change autocomplete model (usage: /autocomplete-model [model] [auto|qwen-fim|instruct])",
+    handler: async (args, ctx) => {
+      const result = parseAutocompleteModelCommand(args, config);
+
+      if (result.action === "status") {
+        ctx.ui.notify(formatAutocompleteModelStatus(config).join("\n"), "info");
+        return;
+      }
+
+      if (result.action === "list") {
+        ctx.ui.notify(formatKnownModelPresets().join("\n"), "info");
+        return;
+      }
+
+      if (result.action === "error") {
+        ctx.ui.notify(result.message, "warning");
+        return;
+      }
+
+      config.model = result.model;
+      config.promptMode = result.promptMode;
+      pi.appendEntry(MODEL_SELECTION_ENTRY_TYPE, {
+        model: config.model,
+        promptMode: config.promptMode,
+        updatedAt: Date.now(),
+      });
+
+      for (const wrapper of wrappers) wrapper.handleConfigChanged();
+
+      ctx.ui.notify(
+        [
+          "pi-ghost-vim model updated",
+          `model: ${config.model}`,
+          `prompt mode: ${describePromptMode(config)}`,
+          `run command: ollama run ${config.model}`,
+          "Use /autocomplete-check to validate it.",
+        ].join("\n"),
+        "info",
+      );
     },
   });
 
   pi.registerCommand("autocomplete-check", {
     description: "Check autocomplete Ollama connectivity and configured model",
     handler: async (args, ctx) => {
-      const config = readConfigFromEnv();
       ctx.ui.notify("pi-ghost-vim: checking Ollama...", "info");
       const result = await runOllamaCheck(config, args.trim());
       printOllamaCheckOutput(ctx, result);
@@ -206,9 +254,13 @@ export default function ghostVim(pi: ExtensionAPI): void {
       );
     }
 
-    const config = readConfigFromEnv();
+    replaceConfig(config, readConfigFromEnv());
+    applyStoredModelSelection(config, readStoredModelSelection(ctx));
     debugEnabled = debugEnabled || config.debug;
-    debug(ctx, `session_start model=${config.model} url=${config.ollamaUrl}`);
+    debug(
+      ctx,
+      `session_start model=${config.model} prompt=${describePromptMode(config)} url=${config.ollamaUrl}`,
+    );
 
     const factory = ((tui, theme, keybindings) => {
       const baseEditor = previousFactory
@@ -430,6 +482,14 @@ class GhostVimWrapper implements EditorComponent, Focusable {
     this.predictions.dispose();
     this.clearGhost();
     this.opts.baseEditor.dispose?.();
+  }
+
+  handleConfigChanged(): void {
+    this.opts.debug(
+      `config: model=${this.opts.config.model} prompt=${describePromptMode(this.opts.config)}`,
+    );
+    this.invalidateGhostAndPrediction();
+    this.requestRender();
   }
 
   getText(): string {
@@ -771,9 +831,10 @@ class PredictionController {
     const timeout = setTimeout(() => controller.abort(), this.opts.config.timeoutMs);
 
     try {
-      this.opts.debug(`request #${requestId}: start`);
-      const prediction = await this.opts.predictor.predict(baseText, controller.signal);
+      this.opts.debug(`request #${requestId}: start before=${debugText(baseText)}`);
+      const raw = await this.opts.predictor.predict(baseText, "", controller.signal);
       const elapsed = Date.now() - startedAt;
+      this.opts.debug(`response #${requestId}: raw=${debugText(raw)}`);
 
       if (requestId !== this.requestId) {
         this.opts.debug(`drop #${requestId}: stale after ${elapsed}ms`);
@@ -788,17 +849,22 @@ class PredictionController {
         this.opts.debug(`drop #${requestId}: ${blockReason} after ${elapsed}ms`);
         return;
       }
-      if (!prediction.trim()) {
-        this.opts.debug(`drop #${requestId}: empty response after ${elapsed}ms`);
+
+      const completion = cleanupCompletion({ before: baseText, raw });
+      this.opts.debug(`clean #${requestId}: ${debugText(completion)}`);
+
+      const rejectionReason = getCompletionRejectionReason(completion);
+      if (!shouldShowCompletion(completion)) {
+        this.opts.debug(`drop #${requestId}: ${rejectionReason ?? "rejected"} after ${elapsed}ms`);
         return;
       }
 
       this.opts.debug(
-        `show #${requestId}: ${prediction.length} chars after ${elapsed}ms`,
+        `show #${requestId}: ${completion.length} chars after ${elapsed}ms`,
       );
       this.opts.onPrediction({
         baseText,
-        text: prediction,
+        text: completion,
         requestId,
         createdAt: Date.now(),
       });
@@ -816,36 +882,22 @@ class PredictionController {
 class OllamaPredictor {
   constructor(private readonly config: GhostConfig) {}
 
-  async predict(text: string, signal: AbortSignal): Promise<string> {
-    return predictWithOllama(text, signal, this.config);
+  async predict(before: string, after: string, signal: AbortSignal): Promise<string> {
+    return predictWithOllama(before, after, signal, this.config);
   }
 }
 
 async function predictWithOllama(
-  text: string,
+  before: string,
+  after: string,
   signal: AbortSignal,
   config: GhostConfig,
 ): Promise<string> {
-  const promptPrefix = text.slice(-config.maxPrefixChars);
-
   const res = await fetch(`${config.ollamaUrl}/api/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     signal,
-    body: JSON.stringify({
-      model: config.model,
-      system: config.systemPrompt,
-      prompt: buildCompletionPrompt(promptPrefix),
-      stream: false,
-      keep_alive: config.keepAlive,
-      options: {
-        temperature: 0,
-        top_p: 0.9,
-        num_predict: config.maxTokens,
-        num_ctx: 4096,
-        stop: ["\n\n\n", "<|im_end|>", "<|endoftext|>"],
-      },
-    }),
+    body: JSON.stringify(buildGenerateRequest(before, after, config, config.maxTokens)),
   });
 
   if (!res.ok) {
@@ -853,12 +905,114 @@ async function predictWithOllama(
     throw new Error(`Ollama HTTP ${res.status}: ${previewForLine(body, 160)}`);
   }
 
-  const json = (await res.json()) as { response?: string };
-  return cleanupPrediction(json.response ?? "");
+  const json = (await res.json()) as OllamaGenerateResponse;
+  if (typeof json.error === "string" && json.error.length > 0) {
+    throw new Error(`Ollama error: ${previewForLine(json.error, 160)}`);
+  }
+
+  return typeof json.response === "string" ? json.response : "";
 }
 
-function buildCompletionPrompt(currentPrompt: string): string {
-  return `Text before cursor:\n${currentPrompt}\n\nMissing continuation after cursor:`;
+type OllamaGenerateRequest = {
+  model: string;
+  prompt: string;
+  raw: boolean;
+  stream: false;
+  keep_alive: string;
+  options: {
+    temperature: number;
+    top_p: number;
+    num_predict: number;
+    num_ctx: number;
+    repeat_penalty: number;
+    stop: string[];
+  };
+};
+
+function buildGenerateRequest(
+  before: string,
+  after: string,
+  config: GhostConfig,
+  maxTokens: number,
+): OllamaGenerateRequest {
+  const promptMode = resolvePromptMode(config);
+
+  return {
+    model: config.model,
+    prompt:
+      promptMode === "qwen-fim"
+        ? buildQwenFimPrompt(before, after)
+        : buildInstructionPrompt(before, after),
+    raw: promptMode === "qwen-fim",
+    stream: false,
+    keep_alive: config.keepAlive,
+    options: {
+      temperature: 0,
+      top_p: 0.9,
+      num_predict: maxTokens,
+      num_ctx: 4096,
+      repeat_penalty: 1.05,
+      stop: getStopTokens(promptMode),
+    },
+  };
+}
+
+function buildQwenFimPrompt(before: string, after = ""): string {
+  return [
+    "<|fim_prefix|>",
+    before.slice(-2500),
+    "<|fim_suffix|>",
+    after.slice(0, 1000),
+    "<|fim_middle|>",
+  ].join("");
+}
+
+function buildInstructionPrompt(before: string, after = ""): string {
+  const suffix = after.trim()
+    ? `\n\nText after cursor:\n${after.slice(0, 1000)}`
+    : "";
+
+  return [
+    "You are an autocomplete engine for a terminal prompt editor.",
+    "Continue the text exactly where it stops.",
+    "Return only the next text to append. Do not explain, quote, or repeat the input.",
+    "",
+    "Text before cursor:",
+    before.slice(-2500),
+    suffix,
+    "",
+    "Continuation:",
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n");
+}
+
+function getStopTokens(promptMode: ResolvedPromptMode): string[] {
+  if (promptMode === "qwen-fim") {
+    return [
+      "<|fim_prefix|>",
+      "<|fim_suffix|>",
+      "<|fim_middle|>",
+      "<|endoftext|>",
+      "<|im_start|>",
+      "<|im_end|>",
+      "\n\n\n",
+    ];
+  }
+
+  return [
+    "<start_of_turn>",
+    "<end_of_turn>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|endoftext|>",
+    "\nText before cursor:",
+    "\nText after cursor:",
+    "\nContinuation:",
+    "\nUser:",
+    "\nAssistant:",
+    "\n\n\n",
+  ];
 }
 
 type OllamaTagsResponse = {
@@ -878,8 +1032,9 @@ async function runOllamaCheck(
     "pi-ghost-vim Ollama check",
     `url: ${config.ollamaUrl}`,
     `model: ${config.model}`,
+    `prompt mode: ${describePromptMode(config)}`,
+    `run command: ollama run ${config.model}`,
     `generate timeout: ${config.checkTimeoutMs}ms`,
-    `system prompt: ${config.systemPromptSource} (${config.systemPrompt.length} chars)`,
   ];
 
   try {
@@ -907,12 +1062,13 @@ async function runOllamaCheck(
       lines.push(`tags: ok (${modelNames.length} model${modelNames.length === 1 ? "" : "s"})`);
       lines.push(`configured model: ${modelFound ? "found" : "MISSING"}`);
       if (!modelFound) lines.push(`pull it with: ollama pull ${config.model}`);
+      if (!modelFound) lines.push(`or start it with: ollama run ${config.model}`);
     }
   } catch (error) {
     lines.push(`tags: ${formatError(error)}`);
   }
 
-  const prompt = promptArg || "Return exactly: ready";
+  const prompt = promptArg || "I would like to add command that";
   try {
     const startedAt = Date.now();
     const generateRes = await fetchWithTimeout(
@@ -920,17 +1076,9 @@ async function runOllamaCheck(
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          prompt,
-          stream: false,
-          keep_alive: config.keepAlive,
-          options: {
-            temperature: 0,
-            num_predict: Math.min(config.maxTokens, 24),
-            num_ctx: 2048,
-          },
-        }),
+        body: JSON.stringify(
+          buildGenerateRequest(prompt, "", config, Math.min(config.maxTokens, 24)),
+        ),
       },
       config.checkTimeoutMs,
     );
@@ -951,10 +1099,15 @@ async function runOllamaCheck(
       return { ok: false, lines };
     }
 
-    const response = typeof json.response === "string" ? json.response.trim() : "";
+    const raw = typeof json.response === "string" ? json.response : "";
+    const cleaned = cleanupCompletion({ before: prompt, raw });
+    const rejectionReason = getCompletionRejectionReason(cleaned);
     lines.push(`generate: ok after ${elapsed}ms`);
-    lines.push(`response: ${previewForLine(response || "(empty)", 240)}`);
-    return { ok: response.length > 0, lines };
+    lines.push(`raw response: ${previewForLine(raw || "(empty)", 240)}`);
+    lines.push(`cleaned: ${previewForLine(cleaned || "(empty)", 240)}`);
+    if (rejectionReason) lines.push(`visibility: rejected (${rejectionReason})`);
+    else lines.push("visibility: would show");
+    return { ok: true, lines };
   } catch (error) {
     lines.push(`generate: ${formatError(error)}`);
     return { ok: false, lines };
@@ -994,35 +1147,118 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-const PREDICTION_LABEL_RE = /^[ \t]*(?:Continuation:|Suggested continuation:|Output:)\s*/i;
+function stripPromptEcho(before: string, completion: string): string {
+  let out = completion;
 
-function cleanupPrediction(text: string): string {
-  let cleaned = text.replace(/\r/g, "");
-
-  for (let i = 0; i < 2; i += 1) {
-    cleaned = stripPredictionWrapper(
-      cleaned
-        .replace(/^(?:[ \t]*\n)+/, "")
-        .replace(PREDICTION_LABEL_RE, "")
-        .replace(/[ \t]+$/gm, "")
-        .replace(/(?:\n[ \t]*)+$/, ""),
-    );
+  if (out.startsWith(before)) {
+    out = out.slice(before.length);
   }
 
-  return cleaned.slice(0, 500);
+  const leadingWhitespace = out.match(/^\s+/)?.[0] ?? "";
+  if (leadingWhitespace && out.slice(leadingWhitespace.length).startsWith(before)) {
+    out = leadingWhitespace + out.slice(leadingWhitespace.length + before.length).replace(/^\s+/, "");
+  }
+
+  const maxOverlap = Math.min(before.length, out.length, 1000);
+
+  for (let len = maxOverlap; len > 0; len--) {
+    const beforeSuffix = before.slice(-len);
+    const outPrefix = out.slice(0, len);
+
+    if (beforeSuffix === outPrefix) {
+      return out.slice(len);
+    }
+  }
+
+  return out;
 }
 
-function stripPredictionWrapper(text: string): string {
-  const fenced = text.match(/^[ \t]*```[^\n`]*\n([\s\S]*?)\n?```[ \t]*$/);
-  if (fenced) return fenced[1] ?? "";
+function looksLikeChatResponse(text: string): boolean {
+  const s = text.trim();
 
-  const inlineFence = text.match(/^[ \t]*```([\s\S]*?)```[ \t]*$/);
-  if (inlineFence) return inlineFence[1] ?? "";
+  return [
+    /^i understand\b/i,
+    /^i'?m sorry\b/i,
+    /^sorry\b/i,
+    /^please provide\b/i,
+    /^could you\b/i,
+    /^can you\b/i,
+    /^sure\b/i,
+    /^certainly\b/i,
+    /^here(?:'s| is)\b/i,
+    /^as an ai\b/i,
+    /^i don'?t have enough context\b/i,
+    /^to assist\b/i,
+    /^the continuation\b/i,
+    /^suggested continuation\b/i,
+    /^the next text\b/i,
+    /^here(?:'s| is) the continuation\b/i,
+    /^continuation:/i,
+    /^output:/i,
+    /^assistant:/i,
+  ].some((re) => re.test(s));
+}
 
-  const quoted = text.match(/^[ \t]*(["'`])([\s\S]*?)\1[ \t]*$/);
-  if (quoted) return quoted[2] ?? "";
+function cleanupCompletion(args: { before: string; raw: string }): string {
+  const { before } = args;
 
-  return text;
+  let out = args.raw
+    .replace(/\r/g, "")
+    .replace(/<\|im_start\|>/g, "")
+    .replace(/<\|im_end\|>/g, "")
+    .replace(/<\|endoftext\|>/g, "")
+    .replace(/<\|fim_prefix\|>/g, "")
+    .replace(/<\|fim_suffix\|>/g, "")
+    .replace(/<\|fim_middle\|>/g, "")
+    .replace(/<start_of_turn>/g, "")
+    .replace(/<end_of_turn>/g, "")
+    .replace(/^\s*\n+/, "");
+
+  out = stripPromptEcho(before, out);
+
+  out = out
+    .replace(/^["'`]+/, "")
+    .replace(/["'`]+$/, "")
+    .replace(
+      /^(Continuation:|Suggested continuation:|Output:|Assistant:|Text to append:)\s*/i,
+      "",
+    )
+    .replace(/[ \t]+$/g, "");
+
+  out = stripPromptEcho(before, out);
+
+  if (!out.trim()) return "";
+  if (looksLikeChatResponse(out)) return "";
+
+  const firstParagraph = out.split(/\n\s*\n/)[0] ?? "";
+  out = firstParagraph;
+
+  if (out.length > 200) {
+    out = out.slice(0, 200);
+  }
+
+  return out;
+}
+
+function shouldShowCompletion(completion: string): boolean {
+  return getCompletionRejectionReason(completion) === null;
+}
+
+function getCompletionRejectionReason(completion: string): string | null {
+  const s = completion.trim();
+
+  if (!s) return "empty";
+  if (s.length < 2) return "too-short";
+  if (looksLikeChatResponse(s)) return "chat-like";
+
+  const sentenceCount = (s.match(/[.!?]/g) ?? []).length;
+  if (sentenceCount > 2) return "too-many-sentences";
+
+  return null;
+}
+
+function debugText(text: string): string {
+  return JSON.stringify(previewForLine(text, 160));
 }
 
 function takeNextChunk(s: string): { take: string; rest: string } {
@@ -1040,10 +1276,6 @@ function takeNextChunk(s: string): { take: string; rest: string } {
   };
 }
 
-function shouldSuppressGhost(text: string, minChars: number): boolean {
-  return getGhostSuppressionReason(text, minChars) !== null;
-}
-
 function getGhostSuppressionReason(text: string, minChars: number): string | null {
   const trimmedLength = text.trim().length;
   if (trimmedLength < minChars) return `min-chars ${trimmedLength}/${minChars}`;
@@ -1052,6 +1284,8 @@ function getGhostSuppressionReason(text: string, minChars: number): string | nul
   if (lastToken.startsWith("/")) return "slash-command-or-path-token";
   if (lastToken.startsWith("@")) return "mention-token";
   if (text.endsWith("/")) return "path-like-trailing-slash";
+  if (/^(?:~\/|\.\.?\/)/.test(lastToken)) return "path-like-token";
+  if (lastToken.includes("/")) return "path-like-token";
 
   return null;
 }
@@ -1113,11 +1347,177 @@ function findFirstReset(
   return first;
 }
 
-function readConfigFromEnv(): GhostConfig {
-  const systemPrompt = readSystemPromptFromEnv();
+type AutocompleteModelCommandResult =
+  | { action: "status" }
+  | { action: "list" }
+  | { action: "error"; message: string }
+  | { action: "set"; model: string; promptMode: PromptMode };
+
+type StoredModelSelection = {
+  model: string;
+  promptMode: PromptMode;
+};
+
+function parseAutocompleteModelCommand(
+  args: string,
+  current: GhostConfig,
+): AutocompleteModelCommandResult {
+  const raw = args.trim();
+  const lower = raw.toLowerCase();
+
+  if (!raw || ["status", "current", "help"].includes(lower)) {
+    return { action: "status" };
+  }
+
+  if (["list", "ls", "models", "presets"].includes(lower)) {
+    return { action: "list" };
+  }
+
+  const parts = raw.split(/\s+/);
+  const last = parts.at(-1)?.toLowerCase();
+  let promptMode: PromptMode = DEFAULT_PROMPT_MODE;
+  let sawPromptMode = false;
+
+  if (last && isPromptMode(last)) {
+    promptMode = last;
+    sawPromptMode = true;
+    parts.pop();
+  }
+
+  const modelArg = parts.join(" ").trim();
+  if (!modelArg && sawPromptMode) {
+    return { action: "set", model: current.model, promptMode };
+  }
+
+  if (!modelArg) {
+    return {
+      action: "error",
+      message:
+        "Usage: /autocomplete-model [model] [auto|qwen-fim|instruct]\nTry: /autocomplete-model gemma4:e2b",
+    };
+  }
 
   return {
+    action: "set",
+    model: resolveModelAlias(modelArg),
+    promptMode,
+  };
+}
+
+function formatAutocompleteModelStatus(config: GhostConfig): string[] {
+  return [
+    "pi-ghost-vim autocomplete model",
+    `model: ${config.model}`,
+    `prompt mode: ${describePromptMode(config)}`,
+    `run command: ollama run ${config.model}`,
+    "change: /autocomplete-model gemma4:e2b",
+    "modes: auto, qwen-fim, instruct",
+  ];
+}
+
+function formatKnownModelPresets(): string[] {
+  return [
+    "pi-ghost-vim known model presets",
+    ...KNOWN_MODEL_PRESETS.map(
+      (preset) =>
+        `${preset.model} — ${preset.label}; mode=${preset.promptMode}; ${preset.runCommand}`,
+    ),
+    "You can also pass any Ollama model name.",
+  ];
+}
+
+function resolveModelAlias(model: string): string {
+  const normalized = model.trim();
+  const lower = normalized.toLowerCase();
+
+  if (lower === "qwen") return "qwen2.5-coder:1.5b";
+  if (lower === "gemma") return "gemma4:e2b";
+
+  return normalized;
+}
+
+function describePromptMode(config: GhostConfig): string {
+  const resolved = resolvePromptMode(config);
+  return config.promptMode === "auto" ? `${resolved} (auto)` : resolved;
+}
+
+function resolvePromptMode(config: GhostConfig): ResolvedPromptMode {
+  if (config.promptMode !== "auto") return config.promptMode;
+
+  const model = config.model.toLowerCase();
+  if (/qwen(?:2\.5|3)?[-_:]?coder/.test(model) || /qwen.*code/.test(model)) {
+    return "qwen-fim";
+  }
+
+  return "instruct";
+}
+
+function isPromptMode(value: string): value is PromptMode {
+  return (PROMPT_MODES as readonly string[]).includes(value);
+}
+
+function readPromptMode(value: string | undefined): PromptMode {
+  if (!value) return DEFAULT_PROMPT_MODE;
+  const normalized = value.trim().toLowerCase();
+  return isPromptMode(normalized) ? normalized : DEFAULT_PROMPT_MODE;
+}
+
+function replaceConfig(target: GhostConfig, source: GhostConfig): void {
+  Object.assign(target, source);
+}
+
+function applyStoredModelSelection(
+  config: GhostConfig,
+  selection: StoredModelSelection | null,
+): void {
+  if (!selection) return;
+  config.model = selection.model;
+  config.promptMode = selection.promptMode;
+}
+
+function readStoredModelSelection(ctx: ExtensionContext): StoredModelSelection | null {
+  type EntryLike = { type?: unknown; customType?: unknown; data?: unknown };
+  const sessionManager = ctx.sessionManager as {
+    getBranch?: () => EntryLike[];
+    getEntries?: () => EntryLike[];
+  };
+  const entries = sessionManager.getBranch?.() ?? sessionManager.getEntries?.() ?? [];
+  let selection: StoredModelSelection | null = null;
+
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== MODEL_SELECTION_ENTRY_TYPE) {
+      continue;
+    }
+
+    selection = parseStoredModelSelection(entry.data) ?? selection;
+  }
+
+  return selection;
+}
+
+function parseStoredModelSelection(data: unknown): StoredModelSelection | null {
+  if (!data || typeof data !== "object") return null;
+
+  const entry = data as { model?: unknown; promptMode?: unknown };
+  if (typeof entry.model !== "string" || entry.model.trim().length === 0) {
+    return null;
+  }
+
+  const promptMode =
+    typeof entry.promptMode === "string"
+      ? readPromptMode(entry.promptMode)
+      : DEFAULT_PROMPT_MODE;
+
+  return {
+    model: entry.model,
+    promptMode,
+  };
+}
+
+function readConfigFromEnv(): GhostConfig {
+  return {
     model: process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL,
+    promptMode: readPromptMode(process.env.PI_GHOST_PROMPT_MODE),
     ollamaUrl: normalizeBaseUrl(
       process.env.PI_GHOST_OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
     ),
@@ -1127,47 +1527,12 @@ function readConfigFromEnv(): GhostConfig {
     checkTimeoutMs: envNumber("PI_GHOST_CHECK_TIMEOUT_MS", DEFAULT_CHECK_TIMEOUT_MS),
     doubleTabMs: envNumber("PI_GHOST_DOUBLE_TAB_MS", 350),
     minChars: envNumber("PI_GHOST_MIN_CHARS", 8),
-    maxPrefixChars: envNumber("PI_GHOST_MAX_PREFIX_CHARS", 2500),
     maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
     inline: envBool("PI_GHOST_INLINE", true),
     debug: envBool("PI_GHOST_DEBUG", false),
-    systemPrompt: systemPrompt.text,
-    systemPromptSource: systemPrompt.source,
   };
 }
 
-function readSystemPromptFromEnv(): { text: string; source: string } {
-  const inline = process.env.PI_GHOST_SYSTEM_PROMPT;
-  if (inline && inline.trim().length > 0) {
-    return {
-      text: normalizeEnvPromptText(inline),
-      source: "PI_GHOST_SYSTEM_PROMPT",
-    };
-  }
-
-  const file = process.env.PI_GHOST_SYSTEM_PROMPT_FILE;
-  if (file && file.trim().length > 0) {
-    const filePath = isAbsolute(file) ? file : resolve(process.cwd(), file);
-
-    try {
-      const text = normalizePromptText(readFileSync(filePath, "utf8"));
-      if (text.length > 0) return { text, source: `file:${filePath}` };
-      return { text: DEFAULT_SYSTEM_PROMPT, source: `default (empty file:${filePath})` };
-    } catch {
-      return { text: DEFAULT_SYSTEM_PROMPT, source: `default (failed file:${filePath})` };
-    }
-  }
-
-  return { text: DEFAULT_SYSTEM_PROMPT, source: "default" };
-}
-
-function normalizeEnvPromptText(text: string): string {
-  return normalizePromptText(text.replace(/\\n/g, "\n"));
-}
-
-function normalizePromptText(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-}
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];

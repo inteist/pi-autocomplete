@@ -7,8 +7,12 @@ The extension asks local Ollama for end-of-prompt completions and only intercept
 ## Requirements
 
 ```bash
+# Default Qwen coder model
 ollama pull qwen2.5-coder:1.5b
 ollama run qwen2.5-coder:1.5b "Say ready"
+
+# Optional Gemma model
+ollama run gemma4:e2b
 ```
 
 Ollama must be reachable at `http://127.0.0.1:11434` unless overridden.
@@ -31,6 +35,10 @@ For auto-discovery, copy or symlink this directory into a Pi extension/package l
 
 ## Commands
 
+- `/autocomplete-model` - shows the active Ollama model and prompt mode.
+- `/autocomplete-model gemma4:e2b` - switches autocomplete to Gemma using instruction-style continuation prompting. The model selection is persisted in the current Pi session.
+- `/autocomplete-model qwen2.5-coder:1.5b` - switches back to Qwen coder using FIM prompting.
+- `/autocomplete-model [model] [auto|qwen-fim|instruct]` - changes model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
 - `/autocomplete-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt. The check result is printed as transient system output above the input, not as a sticky widget.
 - `/autocomplete-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
 
@@ -42,7 +50,7 @@ For auto-discovery, copy or symlink this directory into a Pi extension/package l
 - `Tab` again within 350ms accepts the remaining prediction.
 - `Tab` without a visible ghost is delegated to Pi/pi-vim.
 - `Escape`, normal typing, cursor movement, or leaving insert mode clears the ghost.
-- Slash commands, `@` mentions, and path-like text ending in `/` suppress local ghost predictions.
+- Slash commands, `@` mentions, and likely path tokens suppress local ghost predictions.
 
 The extension renders a dim below-editor preview and also attempts best-effort inline ghost rendering using Pi TUI's cursor marker. Set `PI_GHOST_INLINE=0` to disable inline injection.
 
@@ -52,6 +60,7 @@ Environment variables:
 
 ```bash
 PI_GHOST_MODEL=qwen2.5-coder:1.5b
+PI_GHOST_PROMPT_MODE=auto
 PI_GHOST_OLLAMA_URL=http://127.0.0.1:11434
 PI_GHOST_KEEP_ALIVE=30m
 PI_GHOST_DEBOUNCE_MS=250
@@ -59,40 +68,24 @@ PI_GHOST_TIMEOUT_MS=2500
 PI_GHOST_CHECK_TIMEOUT_MS=10000
 PI_GHOST_DOUBLE_TAB_MS=350
 PI_GHOST_MAX_TOKENS=48
-PI_GHOST_MAX_PREFIX_CHARS=2500
 PI_GHOST_MIN_CHARS=8
 PI_GHOST_INLINE=1
 PI_GHOST_DEBUG=0
-PI_GHOST_SYSTEM_PROMPT="You are an inline autocomplete engine..."
-PI_GHOST_SYSTEM_PROMPT_FILE=/path/to/autocomplete-system-prompt.txt
 ```
 
-### Autocomplete system prompt
+### Autocomplete prompt modes
 
-By default, autocomplete uses a model-neutral Ollama system prompt instead of Qwen chat markers:
+`PI_GHOST_PROMPT_MODE=auto` chooses handling from the active model:
 
-```text
-You are an inline autocomplete engine for the Pi input box editor, where a developer is writing a prompt to an AI coding agent.
+- Qwen coder models use FIM raw completion markers with Ollama `/api/generate` and `raw: true`:
 
-Your job is autocomplete, not answering.
+  ```text
+  <|fim_prefix|>{text before cursor}<|fim_suffix|><|fim_middle|>
+  ```
 
-Return only the missing continuation after the cursor.
+- Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with Ollama's normal model template.
 
-Good continuations are:
-- short: usually 3 to 20 words
-- specific and technically useful
-- written in the same style as the existing text
-- likely to be what the developer would type next
-- stopped at a natural pause
-
-Never include:
-- repeated text from the prompt
-- an answer to the request
-- explanations, greetings, labels, commentary, quotes, or markdown fences
-- bullets unless the user is already writing a list
-```
-
-Set `PI_GHOST_SYSTEM_PROMPT` to replace it inline (`\\n` sequences become newlines), or set `PI_GHOST_SYSTEM_PROMPT_FILE` to load a multi-line prompt from a file. Inline prompt text takes precedence when both are set.
+You can override the mode with `/autocomplete-model [model] qwen-fim` or `/autocomplete-model [model] instruct`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
 
 ## Notes
 
