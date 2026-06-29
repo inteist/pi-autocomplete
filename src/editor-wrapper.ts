@@ -7,6 +7,7 @@ import {
   type Focusable,
 } from "@earendil-works/pi-tui";
 import { GHOST_FACTORY_MARKER } from "./constants.js";
+import { DebugTraceWriter } from "./debug-trace.js";
 import { debugText, takeNextChunk } from "./completion.js";
 import { describePromptMode } from "./config.js";
 import { injectGhostAfterCursor } from "./inline-ghost.js";
@@ -29,6 +30,7 @@ export type GhostEditorFactory = EditorFactory & {
 export class GhostVimWrapper implements EditorComponent, Focusable {
   public readonly actionHandlers: Map<string, ActionHandler>;
 
+  public readonly traceWriter: DebugTraceWriter;
   private ghost: GhostState | null = null;
   private lastTabAt = 0;
   private ownFocused = false;
@@ -38,8 +40,10 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   private _onPasteImage: ActionHandler | undefined;
   private _onExtensionShortcut: ExtensionShortcutHandler | undefined;
   private readonly predictions: PredictionController;
+  private _submitHandler: ((text: string) => void) | undefined;
 
   constructor(private readonly opts: GhostWrapperOptions) {
+    this.traceWriter = new DebugTraceWriter(opts.config);
     this.actionHandlers = new ForwardingActionHandlersMap(
       () => this.opts.baseEditor.actionHandlers,
     );
@@ -48,13 +52,17 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       predictor: new OllamaPredictor(opts.config),
       getText: () => this.getText(),
       getBlockReason: () => this.getPredictionBlockReason(),
-      debug: (message, details) => this.opts.debug(message, details),
+      debug: (message, details) => this.debug(message, details),
       onPrediction: (ghost) => {
         this.ghost = ghost;
         this.showGhostPreview(ghost.text);
         this.requestRender();
       },
     });
+
+    if (this.opts.baseEditor.onSubmit) {
+      this.onSubmit = this.opts.baseEditor.onSubmit;
+    }
   }
 
   get focused(): boolean {
@@ -115,11 +123,20 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   }
 
   get onSubmit(): ((text: string) => void) | undefined {
-    return this.opts.baseEditor.onSubmit;
+    return this._submitHandler;
   }
 
   set onSubmit(handler: ((text: string) => void) | undefined) {
-    this.opts.baseEditor.onSubmit = handler;
+    if (handler) {
+      this._submitHandler = (text: string) => {
+        this.traceWriter.close();
+        handler(text);
+      };
+      this.opts.baseEditor.onSubmit = this._submitHandler;
+    } else {
+      this._submitHandler = undefined;
+      this.opts.baseEditor.onSubmit = undefined;
+    }
   }
 
   get onChange(): ((text: string) => void) | undefined {
@@ -241,6 +258,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     this.disposed = true;
     this.predictions.dispose();
     this.clearGhost();
+    this.traceWriter.close();
     this.opts.baseEditor.dispose?.();
   }
 
@@ -476,7 +494,13 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
 
   private traceFileOnly(message: string, details: DebugTraceDetails): void {
     if (!this.shouldTraceFileOnly()) return;
-    this.opts.debug(message, { ...details, fileOnly: true });
+    this.debug(message, { ...details, fileOnly: true });
+  }
+
+  private debug(message: string, details?: DebugTraceDetails): void {
+    if (!this.shouldTraceFileOnly()) return;
+    this.traceWriter.write(message, details);
+    this.opts.debug(message, { ...details, skipSessionTrace: true });
   }
 
   private dim(text: string): string {

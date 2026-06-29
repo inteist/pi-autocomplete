@@ -33,7 +33,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
     history: [],
   };
   const wrappers = new Set<GhostVimWrapper>();
-  const traceWriter = new DebugTraceWriter(config);
+  let sessionTraceWriter: DebugTraceWriter | null = null;
 
   const disposeWrappers = () => {
     for (const wrapper of wrappers) wrapper.dispose();
@@ -43,11 +43,16 @@ export default function ghostVim(pi: ExtensionAPI): void {
   const debug = (
     ctx: ExtensionContext,
     message: string,
-    details?: DebugTraceDetails,
+    details?: DebugTraceDetails & { skipSessionTrace?: boolean },
   ) => {
     if (!debugState.enabled) return;
 
-    traceWriter.write(message, details);
+    if (!details?.skipSessionTrace) {
+      if (!sessionTraceWriter) {
+        sessionTraceWriter = new DebugTraceWriter(config);
+      }
+      sessionTraceWriter.write(message, details);
+    }
 
     if (details?.fileOnly) return;
 
@@ -85,7 +90,13 @@ export default function ghostVim(pi: ExtensionAPI): void {
     debugState,
     emitDebug: debug,
     onDebugStateChanged: (enabled) => {
-      if (!enabled) traceWriter.close();
+      if (!enabled) {
+        sessionTraceWriter?.close();
+        sessionTraceWriter = null;
+        for (const wrapper of wrappers) {
+          wrapper.traceWriter.close();
+        }
+      }
     },
   });
 
@@ -136,7 +147,8 @@ export default function ghostVim(pi: ExtensionAPI): void {
   pi.on("session_shutdown", (_event, ctx) => {
     disposeWrappers();
     debug(ctx, "session_shutdown", { event: "session-shutdown", fileOnly: true });
-    traceWriter.close();
+    sessionTraceWriter?.close();
+    sessionTraceWriter = null;
     clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
   });
 }

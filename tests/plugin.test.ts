@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -220,14 +220,27 @@ test("/ac debug toggles the debug widget and validates arguments", async () => {
     assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("model=qwen2.5-coder:1.5b")));
     assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("trace=")));
 
-    const traceFile = path.join(dir, "pi-ghost-vim-debug.jsonl");
-    const trace = await readFileEventually(traceFile, '"event":"debug-enabled"');
-    const firstTrace = JSON.parse(trace.trim().split("\n")[0]) as {
-      message?: string;
-      config?: { model?: string };
+    const findTraceFileEventually = async (targetDir: string): Promise<string> => {
+      for (let attempt = 0; attempt < 25; attempt++) {
+        const matching = readdirSync(targetDir).filter((f) =>
+          f.startsWith("pi-ghost-vim-debug-") && f.endsWith(".md")
+        );
+        if (matching.length > 0) {
+          return path.join(targetDir, matching[0]);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error("expected stamped trace file to be created");
     };
-    assert.equal(firstTrace.message, "debug: enabled");
-    assert.equal(firstTrace.config?.model, "qwen2.5-coder:1.5b");
+
+    const traceFile = await findTraceFileEventually(dir);
+    const trace = await readFileEventually(traceFile, '"event":"debug-enabled"');
+
+    assert.ok(trace.includes("model: qwen2.5-coder:1.5b"));
+
+    const traceLines = trace.trim().split("\n").filter((line) => line.includes("{"));
+    assert.ok(traceLines.length > 0);
+    assert.ok(traceLines[0].includes("debug: enabled"));
 
     await command.handler("debug maybe", ctx);
     assert.equal(lastNotification(ctx).level, "warning");
