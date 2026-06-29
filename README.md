@@ -35,12 +35,21 @@ For auto-discovery, copy or symlink this directory into a Pi extension/package l
 
 ## Commands
 
-- `/autocomplete-model` - shows the active Ollama model and prompt mode.
-- `/autocomplete-model gemma4:e2b` - switches autocomplete to Gemma using instruction-style continuation prompting. The model selection is persisted in the current Pi session.
-- `/autocomplete-model qwen2.5-coder:1.5b` - switches back to Qwen coder using FIM prompting.
-- `/autocomplete-model [model] [auto|qwen-fim|instruct]` - changes model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
-- `/autocomplete-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt. The check result is printed as transient system output above the input, not as a sticky widget.
-- `/autocomplete-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
+Primary command namespace:
+
+- `/ac model` - shows the active Ollama model and prompt mode.
+- `/ac model gemma4:e2b` - switches autocomplete to Gemma using instruction-style continuation prompting. The model selection is persisted in the current Pi session.
+- `/ac model qwen2.5-coder:1.5b` - switches back to Qwen coder using FIM prompting.
+- `/ac model [model] [auto|qwen-fim|instruct]` - changes model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
+- `/ac model list` - shows supported model presets plus configured/default aliases.
+- `/ac check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
+- `/ac debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
+- `/ac alias add <model> <alias>` - adds a custom model alias.
+- `/ac alias list [<model>]` - lists custom/default aliases.
+- `/ac alias delete <model> <alias>` - removes one custom alias.
+- `/ac alias reset <model>` - removes all custom aliases for a model.
+
+Legacy aliases remain supported: `/autocomplete-model`, `/autocomplete-check`, and `/autocomplete-debug`.
 
 ## Behavior
 
