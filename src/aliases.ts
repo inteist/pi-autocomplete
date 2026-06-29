@@ -90,7 +90,7 @@ export function getAliasesForModel(modelName: string): string[] {
   if (target === "qwen2.5-coder:1.5b") {
     results.push("qwen");
   }
-  if (target === "gemma4:e2b") {
+  if (target === "gemma4:e4b") {
     results.push("gemma");
   }
 

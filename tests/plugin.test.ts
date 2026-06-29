@@ -87,12 +87,14 @@ function createMockContext(): MockContext {
 function useTempAgentDir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-autocomplete-test-"));
   process.env.PI_CODING_AGENT_DIR = dir;
+  process.env.PI_GHOST_MODEL = "qwen2.5-coder:1.5b";
   return dir;
 }
 
 function cleanupTempAgentDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   delete process.env.PI_CODING_AGENT_DIR;
+  delete process.env.PI_GHOST_MODEL;
 }
 
 function getAcCommand(commands: Map<string, RegisteredCommand>): RegisteredCommand {
@@ -130,10 +132,10 @@ test("registers the unified /ac command and handles model status/update", async 
         model: (gemmaEntry?.data as { model?: string }).model,
         promptMode: (gemmaEntry?.data as { promptMode?: string }).promptMode,
       },
-      { model: "gemma4:e2b", promptMode: "instruct" },
+      { model: "gemma4:e4b", promptMode: "instruct" },
     );
     assert.equal(typeof (gemmaEntry?.data as { updatedAt?: unknown }).updatedAt, "number");
-    assert.match(lastNotification(ctx).message, /model: gemma4:e2b/);
+    assert.match(lastNotification(ctx).message, /model: gemma4:e4b/);
     assert.match(lastNotification(ctx).message, /prompt mode: instruct/);
 
     await command.handler("model qwen", ctx);

@@ -313,20 +313,4 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`, "info");
       }
     },
   });
-
-  // Preserve the pre-/ac command names for users and docs that still reference them.
-  pi.registerCommand("autocomplete-model", {
-    description: "Show/change autocomplete model (usage: /autocomplete-model [model] [auto|qwen-fim|instruct])",
-    handler: handleAcModel,
-  });
-
-  pi.registerCommand("autocomplete-check", {
-    description: "Check autocomplete Ollama connectivity and configured model",
-    handler: handleAcCheck,
-  });
-
-  pi.registerCommand("autocomplete-debug", {
-    description: "Toggle autocomplete debug logging (usage: /autocomplete-debug [on|off])",
-    handler: handleAcDebug,
-  });
 }

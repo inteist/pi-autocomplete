@@ -49,8 +49,6 @@ Primary command namespace:
 - `/ac alias delete <model> <alias>` - removes one custom alias.
 - `/ac alias reset <model>` - removes all custom aliases for a model.
 
-Legacy aliases remain supported: `/autocomplete-model`, `/autocomplete-check`, and `/autocomplete-debug`.
-
 ## Behavior
 
 - Insert mode only.
@@ -94,7 +92,7 @@ PI_GHOST_DEBUG=0
 
 - Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with a `<cursor>` marker. Gemma models are sent with raw generation because Ollama's Gemma renderer/parser can otherwise return an empty `/api/generate` response for continuation prompts.
 
-You can override the mode with `/autocomplete-model [model] qwen-fim` or `/autocomplete-model [model] instruct`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
+You can override the mode with `/ac model [model] qwen-fim` or `/ac model [model] instruct`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
 
 ## Notes
 
