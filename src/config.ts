@@ -1,4 +1,5 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import path from "node:path";
 import {
   DEFAULT_CHECK_TIMEOUT_MS,
   DEFAULT_KEEP_ALIVE,
@@ -49,7 +50,8 @@ export function isPromptMode(value: string): value is PromptMode {
 export function readPromptMode(value: string | undefined): PromptMode {
   if (!value) return DEFAULT_PROMPT_MODE;
   const normalized = value.trim().toLowerCase();
-  return isPromptMode(normalized) ? normalized : DEFAULT_PROMPT_MODE;
+  const mapped = normalized === "fim" ? "qwen-fim" : normalized;
+  return isPromptMode(mapped) ? mapped : DEFAULT_PROMPT_MODE;
 }
 
 /**
@@ -137,6 +139,7 @@ export function readConfigFromEnv(): GhostConfig {
     maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
     inline: envBool("PI_GHOST_INLINE", true),
     debug: envBool("PI_GHOST_DEBUG", false),
+    debugTraceFile: readDebugTraceFilePath(),
   };
 }
 
@@ -146,6 +149,22 @@ function envNumber(name: string, fallback: number): number {
 
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function readDebugTraceFilePath(): string {
+  const trimmed = [
+    process.env.PI_GHOST_DEBUG_FILE,
+    process.env.PI_GHOST_TRACE_FILE,
+    process.env.PI_GHOST_DEBUG_TRACE_FILE,
+  ]
+    .map((value) => value?.trim())
+    .find((value): value is string => !!value);
+
+  if (trimmed) {
+    return path.isAbsolute(trimmed) ? trimmed : path.resolve(trimmed);
+  }
+
+  return path.join(getAgentDir(), "pi-ghost-vim-debug.jsonl");
 }
 
 export function envBool(name: string, fallback: boolean): boolean {

@@ -12,13 +12,18 @@ import {
   replaceConfig,
 } from "./config.js";
 import { registerAutocompleteCommands, type DebugState } from "./commands.js";
+import { DebugTraceWriter } from "./debug-trace.js";
 import {
   GhostVimWrapper,
   unwrapGhostFactory,
   type GhostEditorFactory,
 } from "./editor-wrapper.js";
 import { clearGhostWidget, dimWithTheme, setGhostWidget } from "./ui.js";
-import type { EditorFactory, GhostBaseEditor } from "./types.js";
+import type {
+  DebugTraceDetails,
+  EditorFactory,
+  GhostBaseEditor,
+} from "./types.js";
 
 export default function ghostVim(pi: ExtensionAPI): void {
   let vimMode = "insert";
@@ -28,14 +33,23 @@ export default function ghostVim(pi: ExtensionAPI): void {
     history: [],
   };
   const wrappers = new Set<GhostVimWrapper>();
+  const traceWriter = new DebugTraceWriter(config);
 
   const disposeWrappers = () => {
     for (const wrapper of wrappers) wrapper.dispose();
     wrappers.clear();
   };
 
-  const debug = (ctx: ExtensionContext, message: string) => {
+  const debug = (
+    ctx: ExtensionContext,
+    message: string,
+    details?: DebugTraceDetails,
+  ) => {
     if (!debugState.enabled) return;
+
+    traceWriter.write(message, details);
+
+    if (details?.fileOnly) return;
 
     const time = new Date().toLocaleTimeString();
     const line = dimWithTheme(ctx, `[${time}] ${message}`);
@@ -69,6 +83,10 @@ export default function ghostVim(pi: ExtensionAPI): void {
     config,
     wrappers,
     debugState,
+    emitDebug: debug,
+    onDebugStateChanged: (enabled) => {
+      if (!enabled) traceWriter.close();
+    },
   });
 
   pi.on("session_start", (_event, ctx) => {
@@ -86,10 +104,10 @@ export default function ghostVim(pi: ExtensionAPI): void {
     replaceConfig(config, readConfigFromEnv());
     applyStoredModelSelection(config, readStoredModelSelection(ctx));
     debugState.enabled = debugState.enabled || config.debug;
-    debug(
-      ctx,
-      `session_start model=${config.model} prompt=${describePromptMode(config)} url=${config.ollamaUrl}`,
-    );
+    debug(ctx, `session_start model=${config.model} prompt=${describePromptMode(config)} url=${config.ollamaUrl}`, {
+      event: "session-start",
+      traceFile: config.debugTraceFile,
+    });
 
     const factory = ((tui, theme, keybindings) => {
       const baseEditor = previousFactory
@@ -103,7 +121,8 @@ export default function ghostVim(pi: ExtensionAPI): void {
         baseEditor: baseEditor as GhostBaseEditor,
         getExternalMode: () => vimMode,
         config,
-        debug: (message) => debug(ctx, message),
+        debug: (message, details) => debug(ctx, message, details),
+        isDebugEnabled: () => debugState.enabled,
       });
       wrappers.add(wrapper);
       return wrapper;
@@ -116,6 +135,8 @@ export default function ghostVim(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", (_event, ctx) => {
     disposeWrappers();
+    debug(ctx, "session_shutdown", { event: "session-shutdown", fileOnly: true });
+    traceWriter.close();
     clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
   });
 }

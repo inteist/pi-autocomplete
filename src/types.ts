@@ -33,6 +33,7 @@ export type GhostConfig = {
   maxTokens: number;
   inline: boolean;
   debug: boolean;
+  debugTraceFile: string;
 };
 
 export type GhostState = {
@@ -48,7 +49,15 @@ export type StoredModelSelection = {
 };
 
 export type ModeProvider = () => string;
-export type DebugLogger = (message: string) => void;
+export type DebugTraceDetails = Record<string, unknown> & {
+  /**
+   * When true, write the trace to the debug file without adding it to the
+   * below-editor debug widget.
+   */
+  fileOnly?: boolean;
+};
+
+export type DebugLogger = (message: string, details?: DebugTraceDetails) => void;
 export type ActionHandler = () => void;
 export type ExtensionShortcutHandler = (data: string) => boolean;
 
@@ -81,4 +90,5 @@ export type GhostWrapperOptions = {
   getExternalMode: ModeProvider;
   config: GhostConfig;
   debug: DebugLogger;
+  isDebugEnabled?: () => boolean;
 };

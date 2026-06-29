@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -95,6 +95,21 @@ function cleanupTempAgentDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   delete process.env.PI_CODING_AGENT_DIR;
   delete process.env.PI_GHOST_MODEL;
+  delete process.env.PI_GHOST_DEBUG_FILE;
+  delete process.env.PI_GHOST_TRACE_FILE;
+  delete process.env.PI_GHOST_DEBUG_TRACE_FILE;
+}
+
+async function readFileEventually(filePath: string, needle: string): Promise<string> {
+  for (let attempt = 0; attempt < 25; attempt++) {
+    if (existsSync(filePath)) {
+      const content = readFileSync(filePath, "utf8");
+      if (content.includes(needle)) return content;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.fail(`expected ${filePath} to contain ${needle}`);
 }
 
 function getAcCommand(commands: Map<string, RegisteredCommand>): RegisteredCommand {
@@ -142,6 +157,16 @@ test("registers the unified /ac command and handles model status/update", async 
     const entry = appendedEntries.at(-1)?.data as { model?: string; promptMode?: string };
     assert.equal(entry.model, "qwen2.5-coder:1.5b");
     assert.equal(entry.promptMode, "auto");
+
+    await command.handler("model qwen fim", ctx);
+    const qwenFimEntry = appendedEntries.at(-1)?.data as { model?: string; promptMode?: string };
+    assert.equal(qwenFimEntry.model, "qwen2.5-coder:1.5b");
+    assert.equal(qwenFimEntry.promptMode, "qwen-fim");
+
+    await command.handler("model fim", ctx);
+    const onlyFimEntry = appendedEntries.at(-1)?.data as { model?: string; promptMode?: string };
+    assert.equal(onlyFimEntry.model, "qwen2.5-coder:1.5b");
+    assert.equal(onlyFimEntry.promptMode, "qwen-fim");
   } finally {
     cleanupTempAgentDir(dir);
   }
@@ -189,9 +214,20 @@ test("/ac debug toggles the debug widget and validates arguments", async () => {
     const ctx = createMockContext();
 
     await command.handler("debug on", ctx);
-    assert.equal(lastNotification(ctx).message, "pi-ghost-vim debug enabled");
+    assert.match(lastNotification(ctx).message, /pi-ghost-vim debug enabled/);
+    assert.match(lastNotification(ctx).message, /trace file:/);
     assert.deepEqual(ctx.ui.widgets.at(-1)?.key, "pi-ghost-vim-debug");
     assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("model=qwen2.5-coder:1.5b")));
+    assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("trace=")));
+
+    const traceFile = path.join(dir, "pi-ghost-vim-debug.jsonl");
+    const trace = await readFileEventually(traceFile, '"event":"debug-enabled"');
+    const firstTrace = JSON.parse(trace.trim().split("\n")[0]) as {
+      message?: string;
+      config?: { model?: string };
+    };
+    assert.equal(firstTrace.message, "debug: enabled");
+    assert.equal(firstTrace.config?.model, "qwen2.5-coder:1.5b");
 
     await command.handler("debug maybe", ctx);
     assert.equal(lastNotification(ctx).level, "warning");

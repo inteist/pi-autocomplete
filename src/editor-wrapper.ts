@@ -7,12 +7,13 @@ import {
   type Focusable,
 } from "@earendil-works/pi-tui";
 import { GHOST_FACTORY_MARKER } from "./constants.js";
-import { takeNextChunk } from "./completion.js";
+import { debugText, takeNextChunk } from "./completion.js";
 import { describePromptMode } from "./config.js";
 import { injectGhostAfterCursor } from "./inline-ghost.js";
 import { OllamaPredictor, PredictionController } from "./prediction-controller.js";
 import type {
   ActionHandler,
+  DebugTraceDetails,
   EditorFactory,
   ExtensionShortcutHandler,
   GhostBaseEditor,
@@ -47,7 +48,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       predictor: new OllamaPredictor(opts.config),
       getText: () => this.getText(),
       getBlockReason: () => this.getPredictionBlockReason(),
-      debug: (message) => this.opts.debug(message),
+      debug: (message, details) => this.opts.debug(message, details),
       onPrediction: (ghost) => {
         this.ghost = ghost;
         this.showGhostPreview(ghost.text);
@@ -154,6 +155,17 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   }
 
   handleInput(data: string): void {
+    if (this.shouldTraceFileOnly()) {
+      this.traceFileOnly("input: received", {
+        event: "editor-input",
+        input: data,
+        inputPreview: debugText(data),
+        mode: this.getMode(),
+        textLength: this.getText().length,
+        hasGhost: !!this.ghost,
+      });
+    }
+
     if (!this.isInsertMode()) {
       this.invalidateGhostAndPrediction();
       this.opts.baseEditor.handleInput?.(data);
@@ -200,7 +212,21 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
 
     const after = this.getText();
     if (after !== before) {
+      this.traceFileOnly("input: text changed", {
+        event: "editor-text-change",
+        input: data,
+        beforeLength: before.length,
+        afterLength: after.length,
+        before,
+        after,
+      });
       this.schedulePrediction(after);
+    } else {
+      this.traceFileOnly("input: no text change", {
+        event: "editor-no-text-change",
+        input: data,
+        textLength: after.length,
+      });
     }
 
     this.requestRender();
@@ -221,6 +247,17 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   handleConfigChanged(): void {
     this.opts.debug(
       `config: model=${this.opts.config.model} prompt=${describePromptMode(this.opts.config)}`,
+      {
+        event: "config-changed",
+        model: this.opts.config.model,
+        promptMode: this.opts.config.promptMode,
+        promptModeDescription: describePromptMode(this.opts.config),
+        ollamaUrl: this.opts.config.ollamaUrl,
+        debounceMs: this.opts.config.debounceMs,
+        timeoutMs: this.opts.config.timeoutMs,
+        minChars: this.opts.config.minChars,
+        maxTokens: this.opts.config.maxTokens,
+      },
     );
     this.invalidateGhostAndPrediction();
     this.requestRender();
@@ -324,7 +361,10 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     const now = Date.now();
 
     if (now - this.lastTabAt <= this.opts.config.doubleTabMs) {
-      this.opts.debug("accept: whole ghost via double-tab");
+      this.opts.debug("accept: whole ghost via double-tab", {
+        event: "ghost-accept-double-tab",
+        ghostLength: this.ghost?.text.length ?? 0,
+      });
       this.acceptWholeGhost();
       this.lastTabAt = 0;
       return;
@@ -341,7 +381,13 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     if (!take) return this.ghost.text.length > 0;
 
     const nextText = this.getText() + take;
-    this.opts.debug(`accept: chunk ${take.length} chars, rest=${rest.length}`);
+    this.opts.debug(`accept: chunk ${take.length} chars, rest=${rest.length}`, {
+      event: "ghost-accept-chunk",
+      takeLength: take.length,
+      restLength: rest.length,
+      take,
+      rest,
+    });
     this.setText(nextText);
 
     if (rest.length > 0) {
@@ -361,7 +407,11 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   private acceptWholeGhost(): void {
     if (!this.ghost) return;
 
-    this.opts.debug(`accept: whole ${this.ghost.text.length} chars`);
+    this.opts.debug(`accept: whole ${this.ghost.text.length} chars`, {
+      event: "ghost-accept-whole",
+      ghostLength: this.ghost.text.length,
+      ghostText: this.ghost.text,
+    });
     this.setText(this.getText() + this.ghost.text);
     this.clearGhost();
   }
@@ -376,6 +426,14 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   }
 
   private clearGhost(): void {
+    if (this.ghost) {
+      this.traceFileOnly(`clear: ghost #${this.ghost.requestId}`, {
+        event: "ghost-clear",
+        requestId: this.ghost.requestId,
+        ghostLength: this.ghost.text.length,
+        ghostText: this.ghost.text,
+      });
+    }
     this.ghost = null;
     this.clearGhostPreview();
   }
@@ -410,6 +468,15 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
 
     ui.setWidget?.("pi-ghost-vim", undefined);
     ui.setStatus?.("pi-ghost-vim", undefined);
+  }
+
+  private shouldTraceFileOnly(): boolean {
+    return this.opts.isDebugEnabled?.() ?? true;
+  }
+
+  private traceFileOnly(message: string, details: DebugTraceDetails): void {
+    if (!this.shouldTraceFileOnly()) return;
+    this.opts.debug(message, { ...details, fileOnly: true });
   }
 
   private dim(text: string): string {

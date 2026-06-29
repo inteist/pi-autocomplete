@@ -40,10 +40,10 @@ Primary command namespace:
 - `/ac model` - shows the active Ollama model and prompt mode.
 - `/ac model gemma4:e2b` - switches autocomplete to Gemma using instruction-style continuation prompting. The model selection is persisted in the current Pi session.
 - `/ac model qwen2.5-coder:1.5b` - switches back to Qwen coder using FIM prompting.
-- `/ac model [model] [auto|qwen-fim|instruct]` - changes model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
+- `/ac model [model] [auto|qwen-fim|instruct]` - sets model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models and instruction continuation for others.
 - `/ac model list` - shows supported model presets plus configured/default aliases.
 - `/ac check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
-- `/ac debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
+- `/ac debug [on|off]` - toggles a below-editor debug widget and JSONL file tracing showing why predictions are skipped, requested, dropped, or shown.
 - `/ac alias add <model> <alias>` - adds a custom model alias.
 - `/ac alias list [<model>]` - lists custom/default aliases.
 - `/ac alias delete <model> <alias>` - removes one custom alias.
@@ -78,6 +78,7 @@ PI_GHOST_MAX_TOKENS=48
 PI_GHOST_MIN_CHARS=8
 PI_GHOST_INLINE=1
 PI_GHOST_DEBUG=0
+PI_GHOST_DEBUG_FILE=$PI_CODING_AGENT_DIR/pi-ghost-vim-debug.jsonl
 ```
 
 ### Autocomplete prompt modes
@@ -93,6 +94,12 @@ PI_GHOST_DEBUG=0
 - Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with a `<cursor>` marker. Gemma models are sent with raw generation because Ollama's Gemma renderer/parser can otherwise return an empty `/api/generate` response for continuation prompts.
 
 You can override the mode with `/ac model [model] qwen-fim` or `/ac model [model] instruct`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
+
+### Debug tracing
+
+Enable tracing with `/ac debug on` or `PI_GHOST_DEBUG=1`. In debug mode, every existing debug widget message is also appended as structured JSONL to `PI_GHOST_DEBUG_FILE` (default: `pi-ghost-vim-debug.jsonl` in Pi's agent dir). `PI_GHOST_TRACE_FILE` and `PI_GHOST_DEBUG_TRACE_FILE` are accepted as aliases.
+
+Trace records include scheduling/skip/drop reasons, editor input changes, full prompt payloads sent to Ollama, Ollama response timings/metrics (`total_duration`, `load_duration`, token eval timings), raw responses, cleaned completions, and accept/clear events. The trace file includes prompt text, so only enable it for local debugging.
 
 ## Notes
 

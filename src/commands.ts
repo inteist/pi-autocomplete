@@ -1,5 +1,7 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEBUG_WIDGET_KEY, KNOWN_MODEL_PRESETS, MODEL_SELECTION_ENTRY_TYPE } from "./constants.js";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import {
   deleteModelAlias,
   getAliasesForModel,
@@ -11,13 +13,22 @@ import {
 } from "./aliases.js";
 import { describePromptMode } from "./config.js";
 import {
+  DEBUG_WIDGET_KEY,
+  KNOWN_MODEL_PRESETS,
+  MODEL_SELECTION_ENTRY_TYPE,
+} from "./constants.js";
+import type { GhostVimWrapper } from "./editor-wrapper.js";
+import {
   formatAutocompleteModelStatus,
   parseAutocompleteModelCommand,
 } from "./model-command.js";
 import { runOllamaCheck } from "./ollama.js";
-import { clearGhostWidget, printOllamaCheckOutput, setGhostWidget } from "./ui.js";
-import type { GhostVimWrapper } from "./editor-wrapper.js";
-import type { GhostConfig } from "./types.js";
+import type { DebugTraceDetails, GhostConfig } from "./types.js";
+import {
+  clearGhostWidget,
+  printOllamaCheckOutput,
+  setGhostWidget,
+} from "./ui.js";
 
 export type DebugState = {
   enabled: boolean;
@@ -29,6 +40,12 @@ export type RegisterAutocompleteCommandsOptions = {
   config: GhostConfig;
   wrappers: Set<GhostVimWrapper>;
   debugState: DebugState;
+  emitDebug?: (
+    ctx: ExtensionContext,
+    message: string,
+    details?: DebugTraceDetails,
+  ) => void;
+  onDebugStateChanged?: (enabled: boolean) => void;
 };
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void>;
@@ -38,6 +55,8 @@ export function registerAutocompleteCommands({
   config,
   wrappers,
   debugState,
+  emitDebug,
+  onDebugStateChanged,
 }: RegisterAutocompleteCommandsOptions): void {
   loadAliases();
 
@@ -48,10 +67,10 @@ export function registerAutocompleteCommands({
         "Usage: /ac <subcommand> [args]",
         "",
         "Subcommands:",
-        "  /ac model [<model>] [<mode>]  Show/change model & prompt mode (auto|qwen-fim|instruct)",
+        "  /ac model [<model>] [<mode>]  Change model & prompt mode (auto|qwen-fim|instruct)",
         "  /ac model list                Display all supported models, presets & aliases as a report",
         "  /ac check                     Verify Ollama connection and check active model",
-        "  /ac debug [on|off]            Toggle or set autocomplete debug widget logging",
+        "  /ac debug [on|off]            Toggle debug widget and JSONL file tracing",
         "  /ac alias add <model> <alias> Add a custom alias for a model",
         "  /ac alias list [<model>]      List aliases for a model (or all aliases if omitted)",
         "  /ac alias delete <model> <alias> Delete a specific alias for a model",
@@ -64,33 +83,58 @@ export function registerAutocompleteCommands({
 
   const handleAcDebug: CommandHandler = async (subArgs, ctx) => {
     const arg = subArgs.trim().toLowerCase();
+    let nextEnabled: boolean;
+
     if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) {
-      debugState.enabled = true;
-    } else if (["off", "0", "false", "no", "disable", "disabled"].includes(arg)) {
-      debugState.enabled = false;
+      nextEnabled = true;
+    } else if (
+      ["off", "0", "false", "no", "disable", "disabled"].includes(arg)
+    ) {
+      nextEnabled = false;
     } else if (!arg) {
-      debugState.enabled = !debugState.enabled;
+      nextEnabled = !debugState.enabled;
     } else {
-      ctx.ui.notify("Invalid argument for debug. Usage: /ac debug [on|off]", "warning");
+      ctx.ui.notify(
+        "Invalid argument for debug. Usage: /ac debug [on|off]",
+        "warning",
+      );
       return;
     }
 
-    if (!debugState.enabled) {
+    if (!nextEnabled) {
+      emitDebug?.(ctx, "debug: disabled", {
+        event: "debug-disabled",
+        traceFile: config.debugTraceFile,
+        fileOnly: true,
+      });
+      debugState.enabled = false;
       debugState.history.length = 0;
       clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
+      onDebugStateChanged?.(false);
       ctx.ui.notify("pi-ghost-vim debug disabled", "info");
       return;
     }
 
+    debugState.enabled = true;
     debugState.history.length = 0;
+    emitDebug?.(ctx, "debug: enabled", {
+      event: "debug-enabled",
+      traceFile: config.debugTraceFile,
+      fileOnly: true,
+    });
     setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
       "pi-ghost-vim debug enabled",
+      `trace=${config.debugTraceFile}`,
       `url=${config.ollamaUrl}`,
       `model=${config.model}`,
       `prompt=${describePromptMode(config)}`,
       `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`,
     ]);
-    ctx.ui.notify("pi-ghost-vim debug enabled", "info");
+    onDebugStateChanged?.(true);
+    ctx.ui.notify(
+      [`pi-ghost-vim debug enabled`, `trace file: ${config.debugTraceFile}`].join("\n"),
+      "info",
+    );
   };
 
   const formatModelReport = (): string[] => {
@@ -120,7 +164,9 @@ export function registerAutocompleteCommands({
         lines.push(`• ${model}: aliases: ${aliases.join(", ")}`);
       }
     } else {
-      lines.push("No custom aliases defined. Add one using: /ac alias add <model> <alias>");
+      lines.push(
+        "No custom aliases defined. Add one using: /ac alias add <model> <alias>",
+      );
     }
 
     lines.push("");
@@ -129,7 +175,9 @@ export function registerAutocompleteCommands({
     lines.push("• gemma -> gemma4:e2b");
 
     lines.push("");
-    lines.push("You can pass any Ollama model name to `/ac model <model_name>`.");
+    lines.push(
+      "You can pass any Ollama model name to `/ac model <model_name>`.",
+    );
     return lines;
   };
 
@@ -210,8 +258,11 @@ export function registerAutocompleteCommands({
         if (model) {
           const aliases = getAliasesForModel(model);
           if (aliases.length > 0) {
-            ctx.ui.notify(`Aliases for ${model}:
-${aliases.map((a) => `  • ${a}`).join("\n")}`, "info");
+            ctx.ui.notify(
+              `Aliases for ${model}:
+${aliases.map((a) => `  • ${a}`).join("\n")}`,
+              "info",
+            );
           } else {
             ctx.ui.notify(`No aliases found for model: ${model}`, "info");
           }
@@ -245,9 +296,15 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`, "info");
 
         if (existingModel) {
           saveAliases();
-          ctx.ui.notify(`Alias deleted: ${aliasToDelete} for model ${existingModel}`, "info");
+          ctx.ui.notify(
+            `Alias deleted: ${aliasToDelete} for model ${existingModel}`,
+            "info",
+          );
         } else {
-          ctx.ui.notify(`No custom alias '${aliasToDelete}' found mapping to model '${model}'`, "warning");
+          ctx.ui.notify(
+            `No custom alias '${aliasToDelete}' found mapping to model '${model}'`,
+            "warning",
+          );
         }
         break;
       }
@@ -261,15 +318,24 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`, "info");
         const count = resetAliasesForModel(modelToReset);
         if (count > 0) {
           saveAliases();
-          ctx.ui.notify(`Deleted all ${count} aliases for model: ${modelToReset}`, "info");
+          ctx.ui.notify(
+            `Deleted all ${count} aliases for model: ${modelToReset}`,
+            "info",
+          );
         } else {
-          ctx.ui.notify(`No custom aliases found for model: ${modelToReset}`, "info");
+          ctx.ui.notify(
+            `No custom aliases found for model: ${modelToReset}`,
+            "info",
+          );
         }
         break;
       }
 
       default:
-        ctx.ui.notify(`Unknown alias action: ${action}. Supported: add, list, delete, reset`, "warning");
+        ctx.ui.notify(
+          `Unknown alias action: ${action}. Supported: add, list, delete, reset`,
+          "warning",
+        );
         break;
     }
   };
@@ -281,7 +347,8 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`, "info");
   };
 
   pi.registerCommand("ac", {
-    description: "Autocomplete commands. Usage: /ac [model|check|debug|alias|help]",
+    description:
+      "Autocomplete commands. Usage: /ac [model|check|debug|alias|help]",
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       if (!trimmed) {

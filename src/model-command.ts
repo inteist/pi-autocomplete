@@ -45,10 +45,13 @@ export function parseAutocompleteModelCommand(
   let promptMode: PromptMode = DEFAULT_PROMPT_MODE;
   let sawPromptMode = false;
 
-  if (last && isPromptMode(last)) {
-    promptMode = last;
-    sawPromptMode = true;
-    parts.pop();
+  if (last) {
+    const normalizedLast = last === "fim" ? "qwen-fim" : last;
+    if (isPromptMode(normalizedLast)) {
+      promptMode = normalizedLast;
+      sawPromptMode = true;
+      parts.pop();
+    }
   }
 
   const modelArg = parts.join(" ").trim();
@@ -81,8 +84,9 @@ export function formatAutocompleteModelStatus(config: GhostConfig): string[] {
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,
     `raw generate: ${shouldUseRawGenerate(resolvePromptMode(config), config.model) ? "yes" : "no"}`,
+    `debug trace file: ${config.debugTraceFile}`,
     `run command: ollama run ${config.model}`,
-    "change: /ac model gemma4:e2b",
+    "status: /ac model gemma4:e2b",
     "modes: auto, qwen-fim, instruct",
   ];
 }
