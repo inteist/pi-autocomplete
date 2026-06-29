@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+
 import {
   CustomEditor,
   type ExtensionAPI,
@@ -21,6 +24,24 @@ const DEFAULT_MODEL = "qwen2.5-coder:1.5b";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_KEEP_ALIVE = "30m";
 const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
+const DEFAULT_SYSTEM_PROMPT = `You are an inline autocomplete engine for the Pi input box editor, where a developer is writing a prompt to an AI coding agent.
+
+Your job is autocomplete, not answering.
+
+Return only the missing continuation after the cursor.
+
+Good continuations are:
+- short: usually 3 to 20 words
+- specific and technically useful
+- written in the same style as the existing text
+- likely to be what the developer would type next
+- stopped at a natural pause
+
+Never include:
+- repeated text from the prompt
+- an answer to the request
+- explanations, greetings, labels, commentary, quotes, or markdown fences
+- bullets unless the user is already writing a list`;
 
 const DEBUG_WIDGET_KEY = "pi-ghost-vim-debug";
 const GHOST_FACTORY_MARKER = Symbol.for("pi-ghost-vim.editorFactory");
@@ -41,6 +62,8 @@ type GhostConfig = {
   maxTokens: number;
   inline: boolean;
   debug: boolean;
+  systemPrompt: string;
+  systemPromptSource: string;
 };
 
 type GhostState = {
@@ -155,6 +178,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
         `url=${config.ollamaUrl}`,
         `model=${config.model}`,
         `debounce=${config.debounceMs}ms timeout=${config.timeoutMs}ms minChars=${config.minChars}`,
+        `systemPrompt=${config.systemPromptSource} chars=${config.systemPrompt.length}`,
       ]);
       ctx.ui.notify("pi-ghost-vim debug enabled", "info");
     },
@@ -166,11 +190,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
       const config = readConfigFromEnv();
       ctx.ui.notify("pi-ghost-vim: checking Ollama...", "info");
       const result = await runOllamaCheck(config, args.trim());
-      setGhostWidget(ctx, DEBUG_WIDGET_KEY, result.lines);
-      ctx.ui.notify(
-        result.ok ? "pi-ghost-vim: Ollama check passed" : "pi-ghost-vim: Ollama check failed",
-        result.ok ? "info" : "warning",
-      );
+      printOllamaCheckOutput(ctx, result);
     },
   });
 
@@ -649,6 +669,14 @@ type WidgetCapableUi = ExtensionContext["ui"] & {
   setStatus?: (key: string, value: string | undefined) => void;
 };
 
+function printOllamaCheckOutput(
+  ctx: ExtensionContext,
+  result: { ok: boolean; lines: string[] },
+): void {
+  const status = result.ok ? "passed" : "failed";
+  ctx.ui.notify([...result.lines, `status: ${status}`].join("\n"), result.ok ? "info" : "warning");
+}
+
 function setGhostWidget(ctx: ExtensionContext, key: string, lines: string[]): void {
   const ui = ctx.ui as WidgetCapableUi;
   if (typeof ui.setWidget === "function") {
@@ -798,13 +826,16 @@ async function predictWithOllama(
   signal: AbortSignal,
   config: GhostConfig,
 ): Promise<string> {
+  const promptPrefix = text.slice(-config.maxPrefixChars);
+
   const res = await fetch(`${config.ollamaUrl}/api/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     signal,
     body: JSON.stringify({
       model: config.model,
-      prompt: text.slice(-config.maxPrefixChars),
+      system: config.systemPrompt,
+      prompt: buildCompletionPrompt(promptPrefix),
       stream: false,
       keep_alive: config.keepAlive,
       options: {
@@ -812,7 +843,7 @@ async function predictWithOllama(
         top_p: 0.9,
         num_predict: config.maxTokens,
         num_ctx: 4096,
-        stop: ["\n\n\n"],
+        stop: ["\n\n\n", "<|im_end|>", "<|endoftext|>"],
       },
     }),
   });
@@ -824,6 +855,10 @@ async function predictWithOllama(
 
   const json = (await res.json()) as { response?: string };
   return cleanupPrediction(json.response ?? "");
+}
+
+function buildCompletionPrompt(currentPrompt: string): string {
+  return `Text before cursor:\n${currentPrompt}\n\nMissing continuation after cursor:`;
 }
 
 type OllamaTagsResponse = {
@@ -844,6 +879,7 @@ async function runOllamaCheck(
     `url: ${config.ollamaUrl}`,
     `model: ${config.model}`,
     `generate timeout: ${config.checkTimeoutMs}ms`,
+    `system prompt: ${config.systemPromptSource} (${config.systemPrompt.length} chars)`,
   ];
 
   try {
@@ -1055,6 +1091,8 @@ function findFirstReset(
 }
 
 function readConfigFromEnv(): GhostConfig {
+  const systemPrompt = readSystemPromptFromEnv();
+
   return {
     model: process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL,
     ollamaUrl: normalizeBaseUrl(
@@ -1070,7 +1108,42 @@ function readConfigFromEnv(): GhostConfig {
     maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
     inline: envBool("PI_GHOST_INLINE", true),
     debug: envBool("PI_GHOST_DEBUG", false),
+    systemPrompt: systemPrompt.text,
+    systemPromptSource: systemPrompt.source,
   };
+}
+
+function readSystemPromptFromEnv(): { text: string; source: string } {
+  const inline = process.env.PI_GHOST_SYSTEM_PROMPT;
+  if (inline && inline.trim().length > 0) {
+    return {
+      text: normalizeEnvPromptText(inline),
+      source: "PI_GHOST_SYSTEM_PROMPT",
+    };
+  }
+
+  const file = process.env.PI_GHOST_SYSTEM_PROMPT_FILE;
+  if (file && file.trim().length > 0) {
+    const filePath = isAbsolute(file) ? file : resolve(process.cwd(), file);
+
+    try {
+      const text = normalizePromptText(readFileSync(filePath, "utf8"));
+      if (text.length > 0) return { text, source: `file:${filePath}` };
+      return { text: DEFAULT_SYSTEM_PROMPT, source: `default (empty file:${filePath})` };
+    } catch {
+      return { text: DEFAULT_SYSTEM_PROMPT, source: `default (failed file:${filePath})` };
+    }
+  }
+
+  return { text: DEFAULT_SYSTEM_PROMPT, source: "default" };
+}
+
+function normalizeEnvPromptText(text: string): string {
+  return normalizePromptText(text.replace(/\\n/g, "\n"));
+}
+
+function normalizePromptText(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
 function envNumber(name: string, fallback: number): number {

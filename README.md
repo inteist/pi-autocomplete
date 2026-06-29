@@ -31,7 +31,7 @@ For auto-discovery, copy or symlink this directory into a Pi extension/package l
 
 ## Commands
 
-- `/autocomplete-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt.
+- `/autocomplete-check` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default check prompt. The check result is printed as transient system output above the input, not as a sticky widget.
 - `/autocomplete-debug [on|off]` - toggles a below-editor debug widget showing why predictions are skipped, requested, dropped, or shown.
 
 ## Behavior
@@ -63,7 +63,36 @@ PI_GHOST_MAX_PREFIX_CHARS=2500
 PI_GHOST_MIN_CHARS=8
 PI_GHOST_INLINE=1
 PI_GHOST_DEBUG=0
+PI_GHOST_SYSTEM_PROMPT="You are an inline autocomplete engine..."
+PI_GHOST_SYSTEM_PROMPT_FILE=/path/to/autocomplete-system-prompt.txt
 ```
+
+### Autocomplete system prompt
+
+By default, autocomplete uses a model-neutral Ollama system prompt instead of Qwen chat markers:
+
+```text
+You are an inline autocomplete engine for the Pi input box editor, where a developer is writing a prompt to an AI coding agent.
+
+Your job is autocomplete, not answering.
+
+Return only the missing continuation after the cursor.
+
+Good continuations are:
+- short: usually 3 to 20 words
+- specific and technically useful
+- written in the same style as the existing text
+- likely to be what the developer would type next
+- stopped at a natural pause
+
+Never include:
+- repeated text from the prompt
+- an answer to the request
+- explanations, greetings, labels, commentary, quotes, or markdown fences
+- bullets unless the user is already writing a list
+```
+
+Set `PI_GHOST_SYSTEM_PROMPT` to replace it inline (`\\n` sequences become newlines), or set `PI_GHOST_SYSTEM_PROMPT_FILE` to load a multi-line prompt from a file. Inline prompt text takes precedence when both are set.
 
 ## Notes
 
