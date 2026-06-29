@@ -954,7 +954,7 @@ function buildGenerateRequest(
       promptMode === "qwen-fim"
         ? buildQwenFimPrompt(before, after)
         : buildInstructionPrompt(before, after),
-    raw: promptMode === "qwen-fim",
+    raw: shouldUseRawGenerate(promptMode, config.model),
     stream: false,
     keep_alive: config.keepAlive,
     options: {
@@ -990,6 +990,20 @@ function buildQwenFimPrompt(before: string, after = ""): string {
   ].join("");
 }
 
+// Gemma 4's Ollama renderer/parser can return an empty `/api/generate`
+// response for continuation prompts unless raw generation is used.
+function shouldUseRawGenerate(
+  promptMode: ResolvedPromptMode,
+  model: string,
+): boolean {
+  if (promptMode === "qwen-fim") return true;
+  return isGemmaModel(model);
+}
+
+function isGemmaModel(model: string): boolean {
+  return /^gemma(?:\d|[-_:]|$)/i.test(model.trim());
+}
+
 /**
  * Formats the prefix and suffix context as an instruction prompt for models that
  * do not support raw FIM completion. Tells the model to behave as an autocomplete
@@ -1005,19 +1019,19 @@ function buildQwenFimPrompt(before: string, after = ""): string {
  */
 function buildInstructionPrompt(before: string, after = ""): string {
   const suffix = after.trim()
-    ? `\n\nText after cursor:\n${after.slice(0, 1000)}`
+    ? `\nText after cursor:\n${after.slice(0, 1000)}`
     : "";
 
   return [
-    "You are an autocomplete engine for a terminal prompt editor.",
-    "Continue the text exactly where it stops.",
-    "Return only the next text to append. Do not explain, quote, or repeat the input.",
+    "You are keyboard autocomplete. Continue exactly from <cursor>.",
+    "Output only the characters that come after <cursor>.",
+    "If a word is unfinished, output only the remaining letters.",
+    "Do not explain, quote, or repeat existing text.",
     "",
-    "Text before cursor:",
-    before.slice(-2500),
+    "Text:",
+    `${before.slice(-2500)}<cursor>`,
     suffix,
-    "",
-    "Continuation:",
+    "Completion:",
   ]
     .filter((part) => part.length > 0)
     .join("\n");
@@ -1049,8 +1063,10 @@ function getStopTokens(promptMode: ResolvedPromptMode): string[] {
     "<|im_start|>",
     "<|im_end|>",
     "<|endoftext|>",
+    "\nText:",
     "\nText before cursor:",
     "\nText after cursor:",
+    "\nCompletion:",
     "\nContinuation:",
     "\nUser:",
     "\nAssistant:",
@@ -1088,6 +1104,7 @@ async function runOllamaCheck(
     `url: ${config.ollamaUrl}`,
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,
+    `raw generate: ${shouldUseRawGenerate(resolvePromptMode(config), config.model) ? "yes" : "no"}`,
     `run command: ollama run ${config.model}`,
     `generate timeout: ${config.checkTimeoutMs}ms`,
   ];
@@ -1295,10 +1312,10 @@ function cleanupCompletion(args: { before: string; raw: string }): string {
     .replace(/^["'`]+/, "")
     .replace(/["'`]+$/, "")
     .replace(
-      /^(Continuation:|Suggested continuation:|Output:|Assistant:|Text to append:)\s*/i,
+      /^(Completion:|Continuation:|Suggested continuation:|Output:|Assistant:|Text to append:)\s*/i,
       "",
     )
-    .replace(/[ \t]+$/g, "");
+    .replace(/\s+$/g, "");
 
   out = stripPromptEcho(before, out);
 
@@ -1542,6 +1559,7 @@ function formatAutocompleteModelStatus(config: GhostConfig): string[] {
     "pi-ghost-vim autocomplete model",
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,
+    `raw generate: ${shouldUseRawGenerate(resolvePromptMode(config), config.model) ? "yes" : "no"}`,
     `run command: ollama run ${config.model}`,
     "change: /autocomplete-model gemma4:e2b",
     "modes: auto, qwen-fim, instruct",

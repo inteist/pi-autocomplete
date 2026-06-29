@@ -83,7 +83,7 @@ PI_GHOST_DEBUG=0
   <|fim_prefix|>{text before cursor}<|fim_suffix|><|fim_middle|>
   ```
 
-- Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with Ollama's normal model template.
+- Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with a `<cursor>` marker. Gemma models are sent with raw generation because Ollama's Gemma renderer/parser can otherwise return an empty `/api/generate` response for continuation prompts.
 
 You can override the mode with `/autocomplete-model [model] qwen-fim` or `/autocomplete-model [model] instruct`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
 
