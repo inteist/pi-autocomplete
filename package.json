@@ -1,0 +1,44 @@
+{
+  "name": "pi-ghost-vim",
+  "version": "0.1.0",
+  "description": "Local Ollama ghost autocomplete wrapper for Pi prompt editors, compatible with pi-vim/pi-vim-mode.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "vim",
+    "autocomplete",
+    "ghost-text",
+    "ollama"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "build": "echo 'nothing to build'",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.1",
+    "@earendil-works/pi-tui": "^0.78.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
