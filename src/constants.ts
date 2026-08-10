@@ -11,6 +11,7 @@ export const PROMPT_MODES: readonly PromptMode[] = [
   "auto",
   "qwen-fim",
   "instruct",
+  "lfm-prefill",
 ];
 export const KNOWN_MODEL_PRESETS: readonly KnownModelPreset[] = [
   {
@@ -30,6 +31,12 @@ export const KNOWN_MODEL_PRESETS: readonly KnownModelPreset[] = [
     label: "Gemma 4B (instruction continuation)",
     promptMode: "instruct",
     runCommand: "ollama run gemma4:e4b",
+  },
+  {
+    model: "LFM25:2.6b",
+    label: "Liquid LFM2.5 2.6B (prefill continuation)",
+    promptMode: "lfm-prefill",
+    runCommand: "ollama run LFM25:2.6b",
   },
 ];
 

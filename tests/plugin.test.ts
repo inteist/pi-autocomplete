@@ -7,6 +7,31 @@ import test from "node:test";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 import ghostVim from "../src/index.js";
+import { cleanupCompletion, getCompletionRejectionReason } from "../src/completion.js";
+import { resolvePromptMode } from "../src/config.js";
+import {
+  buildGenerateRequest,
+  buildLfmPrefillPrompt,
+  shouldUseRawGenerate,
+  trimLfmPrefillEnd,
+} from "../src/ollama.js";
+import type { GhostConfig } from "../src/types.js";
+
+const baseTestConfig: GhostConfig = {
+  model: "LFM25:2.6b",
+  promptMode: "auto",
+  ollamaUrl: "http://127.0.0.1:11434",
+  keepAlive: "30m",
+  debounceMs: 250,
+  timeoutMs: 2500,
+  checkTimeoutMs: 10_000,
+  doubleTabMs: 350,
+  minChars: 8,
+  maxTokens: 48,
+  inline: true,
+  debug: false,
+  debugTraceFile: "",
+};
 
 type RegisteredCommand = {
   description?: string;
@@ -364,4 +389,106 @@ test("/ac model default updates default model and last used model persists", asy
   } finally {
     cleanupTempAgentDir(dir);
   }
+});
+
+test("LFM2.5 models resolve to the prefill prompt mode and raw generation", () => {
+  const base: GhostConfig = { ...baseTestConfig, promptMode: "auto" };
+
+  for (const model of ["LFM25:2.6b", "lfm2.5:2.6b", "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q8_0"]) {
+    assert.equal(resolvePromptMode({ ...base, model }), "lfm-prefill", model);
+    assert.equal(shouldUseRawGenerate("lfm-prefill", model), true, model);
+  }
+
+  // Other models keep their existing resolution.
+  assert.equal(resolvePromptMode({ ...base, model: "qwen2.5-coder:1.5b" }), "qwen-fim");
+  assert.equal(resolvePromptMode({ ...base, model: "gemma4:e4b" }), "instruct");
+
+  // An explicit mode still wins over the model name.
+  assert.equal(
+    resolvePromptMode({ ...base, model: "LFM25:2.6b", promptMode: "instruct" }),
+    "instruct",
+  );
+});
+
+test("LFM prefill prompt closes the think block and ends on the unfinished text", () => {
+  const prompt = buildLfmPrefillPrompt("add a command that lists all supported mod");
+
+  // A pre-closed think block is what keeps the reasoning model from reasoning: the
+  // chat template would otherwise open the assistant turn with a bare `<think>`.
+  assert.ok(prompt.startsWith("<|startoftext|><|im_start|>system\n"));
+  assert.ok(prompt.includes("<|im_start|>assistant\n<think></think>"));
+  assert.ok(!prompt.includes("<think>\n"));
+
+  // The prompt must end inside an open assistant turn, right after the typed text.
+  assert.ok(prompt.endsWith("add a command that lists all supported mod"));
+  assert.equal(prompt.trimEnd().endsWith("<|im_end|>"), false);
+
+  // Few-shot turns are present and closed.
+  assert.equal(prompt.split("<think></think>").length - 1, 4);
+
+  const request = buildGenerateRequest(
+    "add a command that lists all supported mod",
+    "",
+    { ...baseTestConfig, model: "LFM25:2.6b", promptMode: "auto" },
+    48,
+  );
+  assert.equal(request.raw, true);
+  assert.equal(request.prompt, prompt);
+  assert.ok(request.options.stop.includes("<|im_end|>"));
+  assert.ok(request.options.stop.includes("<think>"));
+});
+
+test("LFM prefill trims trailing spaces so the model does not see a dangling space", () => {
+  // A bare trailing space tokenises on its own and reliably degenerates the output.
+  assert.equal(trimLfmPrefillEnd("the retry logic is "), "the retry logic is");
+  assert.equal(trimLfmPrefillEnd("the retry logic is\t "), "the retry logic is");
+  assert.equal(trimLfmPrefillEnd("finish the word"), "finish the word");
+  // Newlines carry layout meaning and are common tokens, so they are kept.
+  assert.equal(trimLfmPrefillEnd("first line\n"), "first line\n");
+
+  const prompt = buildLfmPrefillPrompt("the retry logic is ");
+  assert.ok(prompt.endsWith("the retry logic is"));
+
+  // The suffix, when present, is described in the user turn rather than prefilled.
+  const withSuffix = buildLfmPrefillPrompt("add a ", " command that prints the model");
+  assert.ok(withSuffix.includes("Text that follows the cursor:\n command that prints the model"));
+  assert.ok(withSuffix.endsWith("add a"));
+});
+
+test("cleanup re-aligns whitespace and drops reasoning output", () => {
+  // The buffer already holds the space, so the model's own leading space is dropped.
+  assert.equal(
+    cleanupCompletion({ before: "the retry logic is ", raw: " async and non-blocking" }),
+    "async and non-blocking",
+  );
+  // Mid-word continuations are untouched.
+  assert.equal(
+    cleanupCompletion({ before: "covering deb", raw: "ounce and caching" }),
+    "ounce and caching",
+  );
+  // Without a trailing space in the buffer, a leading space is meaningful and kept.
+  assert.equal(
+    cleanupCompletion({ before: "press esc", raw: " twice to dismiss" }),
+    " twice to dismiss",
+  );
+
+  // Only the answer survives a leaked think block.
+  assert.equal(
+    cleanupCompletion({
+      before: "the tests fail because ",
+      raw: "<think>The user wants me to continue.</think>the mock returns undefined",
+    }),
+    "the mock returns undefined",
+  );
+  assert.equal(
+    cleanupCompletion({ before: "add a ", raw: "<|startoftext|>status command" }),
+    "status command",
+  );
+
+  // Reasoning narration is rejected rather than shown.
+  assert.equal(
+    getCompletionRejectionReason("The user wants me to continue the sentence."),
+    "chat-like",
+  );
+  assert.equal(getCompletionRejectionReason("the user can cancel the request"), null);
 });

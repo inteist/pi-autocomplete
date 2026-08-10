@@ -10,7 +10,7 @@ import type {
   TUI,
 } from "@earendil-works/pi-tui";
 
-export type PromptMode = "auto" | "qwen-fim" | "instruct";
+export type PromptMode = "auto" | "qwen-fim" | "instruct" | "lfm-prefill";
 export type ResolvedPromptMode = Exclude<PromptMode, "auto">;
 
 export type KnownModelPreset = {

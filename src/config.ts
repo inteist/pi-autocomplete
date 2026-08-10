@@ -26,7 +26,7 @@ export function describePromptMode(config: GhostConfig): string {
 /**
  * Resolves the active prompt mode into a concrete mode. If configured to `"auto"`,
  * it infers the mode from the model name (Qwen coder models use `"qwen-fim"`,
- * others default to `"instruct"`).
+ * Liquid LFM models use `"lfm-prefill"`, others default to `"instruct"`).
  */
 export function resolvePromptMode(config: GhostConfig): ResolvedPromptMode {
   if (config.promptMode !== "auto") return config.promptMode;
@@ -35,8 +35,19 @@ export function resolvePromptMode(config: GhostConfig): ResolvedPromptMode {
   if (/qwen(?:2\.5|3)?[-_:]?coder/.test(model) || /qwen.*code/.test(model)) {
     return "qwen-fim";
   }
+  if (isLfmModel(model)) {
+    return "lfm-prefill";
+  }
 
   return "instruct";
+}
+
+/**
+ * Detects Liquid AI LFM models, covering local tags (`LFM25:2.6b`, `lfm2.5:2.6b`)
+ * as well as direct Hugging Face pulls (`hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q8_0`).
+ */
+export function isLfmModel(model: string): boolean {
+  return /lfm/i.test(model);
 }
 
 /**
