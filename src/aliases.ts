@@ -2,6 +2,16 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import fs from "fs";
 import path from "path";
 
+/**
+ * Built-in aliases (alias -> model), the single source of truth for alias resolution,
+ * alias listings and `/ac` argument completion.
+ */
+export const DEFAULT_ALIASES: Readonly<Record<string, string>> = {
+  qwen: "qwen2.5-coder:1.5b",
+  gemma: "gemma4:e4b",
+  lfm: "LFM25:2.6b",
+};
+
 let customAliases: Record<string, string> = {};
 
 export function getAliasesFilePath(): string {
@@ -87,11 +97,10 @@ export function getAliasesForModel(modelName: string): string[] {
   const target = modelName.trim().toLowerCase();
   const results: string[] = [];
 
-  if (target === "qwen2.5-coder:1.5b") {
-    results.push("qwen");
-  }
-  if (target === "gemma4:e4b") {
-    results.push("gemma");
+  for (const [alias, model] of Object.entries(DEFAULT_ALIASES)) {
+    if (model.toLowerCase() === target) {
+      results.push(alias);
+    }
   }
 
   for (const [alias, model] of Object.entries(customAliases)) {
@@ -110,8 +119,9 @@ export function resolveModelAlias(model: string): string {
     return customAliases[lower];
   }
 
-  if (lower === "qwen") return "qwen2.5-coder:1.5b";
-  if (lower === "gemma") return "gemma4:e4b";
+  if (DEFAULT_ALIASES[lower]) {
+    return DEFAULT_ALIASES[lower];
+  }
 
   return normalized;
 }

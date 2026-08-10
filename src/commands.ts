@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getAcArgumentCompletions } from "./ac-completion.js";
 import {
+  DEFAULT_ALIASES,
   deleteModelAlias,
   getAliasesForModel,
   getCustomAliasEntries,
@@ -68,7 +69,7 @@ export function registerAutocompleteCommands({
         "Usage: /ac <subcommand> [args]",
         "",
         "Subcommands:",
-        "  /ac model [<model>] [<mode>]  Change model & prompt mode (auto|qwen-fim|instruct)",
+        "  /ac model [<model>] [<mode>]  Change model & prompt mode (auto|qwen-fim|instruct|lfm-prefill)",
         "  /ac model default <model> [<mode>] Update default model & prompt mode",
         "  /ac model list                Display all supported models, presets & aliases as a report",
         "  /ac status                    Verify Ollama connection and report active model",
@@ -176,8 +177,9 @@ export function registerAutocompleteCommands({
 
     lines.push("");
     lines.push("--- Default Aliases ---");
-    lines.push("• qwen -> qwen2.5-coder:1.5b");
-    lines.push("• gemma -> gemma4:e2b");
+    for (const [alias, model] of Object.entries(DEFAULT_ALIASES)) {
+      lines.push(`• ${alias} -> ${model}`);
+    }
 
     lines.push("");
     lines.push(

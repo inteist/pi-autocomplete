@@ -47,7 +47,7 @@ export function parseAutocompleteModelCommand(
     if (!defaultArgs) {
       return {
         action: "error",
-        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct]",
+        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct|lfm-prefill]",
       };
     }
 
@@ -69,7 +69,7 @@ export function parseAutocompleteModelCommand(
     if (!modelArg) {
       return {
         action: "error",
-        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct]",
+        message: "Usage: /ac model default <model> [auto|qwen-fim|instruct|lfm-prefill]",
       };
     }
 
@@ -103,7 +103,7 @@ export function parseAutocompleteModelCommand(
     return {
       action: "error",
       message:
-        "Usage: /ac model [model] [auto|qwen-fim|instruct]\nTry: /ac model gemma4:e2b",
+        "Usage: /ac model [model] [auto|qwen-fim|instruct|lfm-prefill]\nTry: /ac model gemma4:e2b",
     };
   }
 

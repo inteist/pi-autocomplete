@@ -2,6 +2,17 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getAliasesForModel, getCustomAliasEntries } from "./aliases.js";
 import { KNOWN_MODEL_PRESETS } from "./constants.js";
 
+type CompletionCandidate = { value: string; label: string; description: string };
+
+/** Model suggestions, kept in sync with the presets rather than duplicated per subcommand. */
+function presetModelCandidates(): CompletionCandidate[] {
+  return KNOWN_MODEL_PRESETS.map((preset) => ({
+    value: preset.model,
+    label: preset.model,
+    description: preset.label,
+  }));
+}
+
 export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | null {
   const tokens: string[] = [];
   let currentToken = "";
@@ -54,27 +65,13 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
 
   if (subcommand === "model") {
     if (subArgs.length === 1) {
-      const candidates = [
+      const candidates: CompletionCandidate[] = [
         {
           value: "list",
           label: "list",
           description: "Display all supported models, presets & aliases"
         },
-        {
-          value: "qwen2.5-coder:1.5b",
-          label: "qwen2.5-coder:1.5b",
-          description: "Qwen Coder small (FIM)"
-        },
-        {
-          value: "gemma4:e2b",
-          label: "gemma4:e2b",
-          description: "Gemma 2B (instruction continuation)"
-        },
-        {
-          value: "gemma4:e4b",
-          label: "gemma4:e4b",
-          description: "Gemma 4B (instruction continuation)"
-        },
+        ...presetModelCandidates(),
         {
           value: "qwen",
           label: "qwen",
@@ -84,6 +81,11 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
           value: "gemma",
           label: "gemma",
           description: "Alias for gemma4:e4b"
+        },
+        {
+          value: "lfm",
+          label: "lfm",
+          description: "Alias for LFM25:2.6b"
         }
       ];
       const customAliasEntries = getCustomAliasEntries();
@@ -124,6 +126,11 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
           value: "instruct",
           label: "instruct",
           description: "Instruction continuation mode"
+        },
+        {
+          value: "lfm-prefill",
+          label: "lfm-prefill",
+          description: "LFM2.5 assistant-prefill continuation mode"
         }
       ];
       const filtered = modes
@@ -202,23 +209,7 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
       const action = subArgs[0].toLowerCase();
       if (action === "add" && subArgs.length === 2) {
         const val = subArgs[1].toLowerCase();
-        const models = [
-          {
-            value: "qwen2.5-coder:1.5b",
-            label: "qwen2.5-coder:1.5b",
-            description: "Qwen Coder small (FIM)"
-          },
-          {
-            value: "gemma4:e2b",
-            label: "gemma4:e2b",
-            description: "Gemma 2B (instruction continuation)"
-          },
-          {
-            value: "gemma4:e4b",
-            label: "gemma4:e4b",
-            description: "Gemma 4B (instruction continuation)"
-          }
-        ];
+        const models = presetModelCandidates();
         const filtered = models
           .filter((m) => m.value.toLowerCase().startsWith(val))
           .map((m) => ({
@@ -231,23 +222,7 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
 
       if (action === "list" && subArgs.length === 2) {
         const val = subArgs[1].toLowerCase();
-        const models = [
-          {
-            value: "qwen2.5-coder:1.5b",
-            label: "qwen2.5-coder:1.5b",
-            description: "Qwen Coder small (FIM)"
-          },
-          {
-            value: "gemma4:e2b",
-            label: "gemma4:e2b",
-            description: "Gemma 2B (instruction continuation)"
-          },
-          {
-            value: "gemma4:e4b",
-            label: "gemma4:e4b",
-            description: "Gemma 4B (instruction continuation)"
-          }
-        ];
+        const models = presetModelCandidates();
         const filtered = models
           .filter((m) => m.value.toLowerCase().startsWith(val))
           .map((m) => ({

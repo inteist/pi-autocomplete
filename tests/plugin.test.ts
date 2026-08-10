@@ -7,6 +7,7 @@ import test from "node:test";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 import ghostVim from "../src/index.js";
+import { resolveModelAlias } from "../src/aliases.js";
 import { cleanupCompletion, getCompletionRejectionReason } from "../src/completion.js";
 import { resolvePromptMode } from "../src/config.js";
 import {
@@ -320,6 +321,8 @@ test("/ac getArgumentCompletions returns expected suggestions", async () => {
     assert.ok(modelValues.includes("model qwen2.5-coder:1.5b"));
     assert.ok(modelValues.includes("model qwen"));
     assert.ok(modelValues.includes("model gemma"));
+    assert.ok(modelValues.includes("model LFM25:2.6b"));
+    assert.ok(modelValues.includes("model lfm"));
 
     // 4. /ac model with partial
     const modelPartial = command.getArgumentCompletions("model qw");
@@ -329,7 +332,12 @@ test("/ac getArgumentCompletions returns expected suggestions", async () => {
     // 5. /ac model mode suggestions
     const modeCompletions = command.getArgumentCompletions("model qwen ");
     assert.ok(modeCompletions);
-    assert.deepEqual(modeCompletions.map((c) => c.value), ["model qwen auto", "model qwen qwen-fim", "model qwen instruct"]);
+    assert.deepEqual(modeCompletions.map((c) => c.value), [
+      "model qwen auto",
+      "model qwen qwen-fim",
+      "model qwen instruct",
+      "model qwen lfm-prefill",
+    ]);
 
     // 6. /ac debug suggestions
     const debugCompletions = command.getArgumentCompletions("debug o");
@@ -408,6 +416,8 @@ test("LFM2.5 models resolve to the prefill prompt mode and raw generation", () =
     resolvePromptMode({ ...base, model: "LFM25:2.6b", promptMode: "instruct" }),
     "instruct",
   );
+
+  assert.equal(resolveModelAlias("lfm"), "LFM25:2.6b");
 });
 
 test("LFM prefill prompt closes the think block and ends on the unfinished text", () => {
