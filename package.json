@@ -22,7 +22,8 @@
   "scripts": {
     "build": "echo 'nothing to build'",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck",
+    "test": "rm -rf .tmp/test-dist && tsc -p tsconfig.test.json && node --test .tmp/test-dist/tests/*.test.js",
+    "check": "npm run typecheck && npm test",
     "prepack": "npm run build",
     "prepublishOnly": "npm run check"
   },
