@@ -48,7 +48,8 @@ Primary command namespace:
 - `/ac model [model] [auto|qwen-fim|instruct|lfm-prefill]` - sets model and optionally overrides prompt handling. `auto` uses Qwen FIM for Qwen coder models, prefill continuation for LFM models, and instruction continuation for others.
 - `/ac model list` - shows supported model presets plus configured/default aliases.
 - `/ac status` - validates the configured Ollama URL/model and runs a tiny `/api/generate` request. Optional args replace the default diagnostic prompt.
-- `/ac debug [on|off]` - toggles a below-editor debug widget and JSONL file tracing showing why predictions are skipped, requested, dropped, or shown.
+- `/ac trace [on|off]` - shows where traces are written plus today's counts, or switches recording on/off (persisted).
+- `/ac debug [on|off]` - toggles a below-editor debug widget and the verbose event stream showing why predictions are skipped, requested, dropped, or shown.
 - `/ac alias add <model> <alias>` - adds a custom model alias.
 - `/ac alias list [<model>]` - lists custom/default aliases.
 - `/ac alias delete <model> <alias>` - removes one custom alias.
@@ -83,7 +84,8 @@ PI_GHOST_MAX_TOKENS=48
 PI_GHOST_MIN_CHARS=8
 PI_GHOST_INLINE=1
 PI_GHOST_DEBUG=0
-PI_GHOST_DEBUG_FILE=$PI_CODING_AGENT_DIR/pi-ghost-vim-debug.jsonl
+PI_AC_TRACE=1
+PI_AC_TRACE_DIR=~/.pi/ac-traces
 ```
 
 ### Autocomplete prompt modes
@@ -136,11 +138,75 @@ Typical end-to-end latency for the shipped prompt on Apple Silicon with the `Q8_
 ~230ms median, ~640ms worst case, with the model usually stopping on its own after fewer
 than ten tokens.
 
+## Trace collection
+
+Every completion attempt is recorded as one JSON object on one line of a daily file:
+
+```text
+~/.pi/ac-traces/ac-trace-2026-08-10.jsonl      # completions and submitted prompts
+~/.pi/ac-traces/debug/ac-debug-2026-08-10.jsonl # verbose event stream (/ac debug only)
+```
+
+The location is fixed per machine rather than per project - Pi's agent dir moves with
+`PI_CODING_AGENT_DIR`, which would scatter the corpus across checkouts - and each record
+carries its own `session.cwd`, so per-project slicing still works after the fact. Override
+the location with `PI_AC_TRACE_DIR`, switch recording off with `/ac trace off` or
+`PI_AC_TRACE=0`, and use `/ac trace` to see today's counts.
+
+### What a record holds
+
+A completion record is only written once its outcome is known, because the interesting
+half of a trace is what the user did next. The schema (`ac-trace/0.1.0`) borrows its
+conventions from [Agent Trace](https://agent-trace.dev) - semver `schema`, UUID `id`, RFC
+3339 `ts`, a `tool` block, a models.dev-style `model.id` - but nothing of its structure,
+which is about attributing committed lines rather than keystroke-time suggestions.
+
+| Field | Why it is there |
+| --- | --- |
+| `context.prefix` / `word_prefix` / `trigger` | Exactly what was on screen, the unfinished word, and the keystroke that fired the request. |
+| `prompt.text` / `prompt.hash` | The full string sent to Ollama, few-shots and control tokens included. The hash groups records by prompt template so two prompt variants can be compared. |
+| `response.raw` / `completion` / `reject_reason` | Model output before and after cleanup, plus why it was refused. |
+| `outcome.status` | `accepted_full`, `accepted_partial`, `shown_rejected`, `filtered`, `stale`, `error`. |
+| `outcome.accepted_text` | The part of the suggestion that made it into the buffer. |
+| `outcome.typed_text` | What actually followed that prefix, resolved from the submitted prompt where possible. |
+| `outcome.match` | Suggestion against reality: shared prefix length and ratio, raw and normalised. |
+| `timing.*` | Debounce served, HTTP roundtrip, keystroke-to-ghost latency, and Ollama's own token timings. |
+
+A `submission` record is written per submitted prompt with the final text and the
+composition stats, including `accepted_ratio` - how much of the prompt came from
+autocomplete. The final text is the strongest ground truth available for what a completion
+should have predicted, so keeping it next to the attempts is the point of the file.
+
+### Analysing a day
+
+```bash
+cd ~/.pi/ac-traces
+
+# Accept rate per prompt mode
+jq -rs 'map(select(.type=="completion" and .outcome.shown)) | group_by(.model.prompt_mode)[]
+        | "\(.[0].model.prompt_mode) \(map(select(.outcome.status|startswith("accepted")))|length)/\(length)"' ac-trace-*.jsonl
+
+# Suggestions that were refused but that the user then typed anyway
+jq -c 'select(.outcome.status=="filtered" and .outcome.match.common_prefix_ratio > 0.5)
+       | {reject: .response.reject_reason, raw: .response.raw, typed: .outcome.typed_text}' ac-trace-*.jsonl
+
+# Where the suggestion diverged from reality, worst first
+jq -c 'select(.outcome.shown) | {ratio: .outcome.match.common_prefix_ratio,
+       prefix: .context.prefix, suggested: .response.completion, typed: .outcome.typed_text}' ac-trace-*.jsonl \
+  | jq -s 'sort_by(.ratio)[:20]'
+```
+
+Records contain the prompt text you typed. They never leave the machine, but treat the
+directory as you would your shell history; `/ac trace off` stops recording, and deleting a
+day file is enough to drop it.
+
 ### Debug tracing
 
-Enable tracing with `/ac debug on` or `PI_GHOST_DEBUG=1`. In debug mode, every existing debug widget message is also appended as structured JSONL to `PI_GHOST_DEBUG_FILE` (default: `pi-ghost-vim-debug.jsonl` in Pi's agent dir). `PI_GHOST_TRACE_FILE` and `PI_GHOST_DEBUG_TRACE_FILE` are accepted as aliases.
-
-Trace records include scheduling/skip/drop reasons, editor input changes, full prompt payloads sent to Ollama, Ollama response timings/metrics (`total_duration`, `load_duration`, token eval timings), raw responses, cleaned completions, and accept/clear events. The trace file includes prompt text, so only enable it for local debugging.
+`/ac debug on` (or `PI_GHOST_DEBUG=1`) adds the below-editor debug widget and a second,
+much noisier daily file under `<trace dir>/debug/`: one line per internal event -
+scheduling, skip and drop reasons, editor input, the Ollama request and response, cleanup,
+accepts and clears. That is the file to read when chasing why one specific ghost did or
+did not appear; the completion traces above are the file to analyse in bulk.
 
 ## Notes
 
