@@ -4,7 +4,18 @@ import {
   getCompletionRejectionReason,
   getGhostSuppressionReason,
 } from "./completion.js";
-import { predictWithOllama } from "./ollama.js";
+import { resolvePromptMode } from "./config.js";
+import {
+  predictWithOllama,
+  type OllamaPredictionResult,
+  type OllamaTraceContext,
+} from "./ollama.js";
+import {
+  emptyContextSnapshot,
+  type CompletionOutcomeHint,
+  type CompletionTraceDraft,
+  type EditorContextSnapshot,
+} from "./trace-recorder.js";
 import type { DebugLogger, GhostConfig, GhostState } from "./types.js";
 import { formatError } from "./utils.js";
 
@@ -14,7 +25,9 @@ export type PredictionControllerOptions = {
   getText: () => string;
   getBlockReason: () => string | null;
   debug: DebugLogger;
-  onPrediction: (ghost: GhostState) => void;
+  onPrediction: (ghost: GhostState, trace: CompletionTraceDraft) => void;
+  /** Every request that reached the model without producing visible ghost text. */
+  onTrace: (trace: CompletionTraceDraft) => void;
 };
 
 export class PredictionController {
@@ -26,7 +39,7 @@ export class PredictionController {
 
   constructor(private readonly opts: PredictionControllerOptions) {}
 
-  schedule(baseText: string): void {
+  schedule(baseText: string, context = emptyContextSnapshot()): void {
     const requestId = this.nextRequest();
 
     const suppressionReason = getGhostSuppressionReason(
@@ -78,7 +91,7 @@ export class PredictionController {
         this.debounceRequestId = null;
         this.debounce = null;
       }
-      void this.runPrediction(baseText, requestId, scheduledAt);
+      void this.runPrediction(baseText, requestId, scheduledAt, context);
     }, this.opts.config.debounceMs);
   }
 
@@ -126,6 +139,7 @@ export class PredictionController {
     baseText: string,
     requestId: number,
     scheduledAt: number,
+    context: EditorContextSnapshot,
   ): Promise<void> {
     const controller = new AbortController();
     this.abort = controller;
@@ -138,6 +152,14 @@ export class PredictionController {
       controller.abort();
     }, this.opts.config.timeoutMs);
 
+    const draft = this.createDraft(baseText, requestId, scheduledAt, startedAt, context);
+    const emitTrace = (hint: CompletionOutcomeHint, reason: string | null) => {
+      draft.hint = hint;
+      draft.reason = reason;
+      draft.finishedAt = Date.now();
+      this.opts.onTrace(draft);
+    };
+
     try {
       this.opts.debug(`request #${requestId}: start before=${debugText(baseText)}`, {
         event: "prediction-request-start",
@@ -147,10 +169,18 @@ export class PredictionController {
         textLength: baseText.length,
         text: baseText,
       });
-      const raw = await this.opts.predictor.predict(baseText, "", controller.signal, {
+      const result = await this.opts.predictor.predict(baseText, "", controller.signal, {
         requestId,
         debug: this.opts.debug,
+        onRequest: (request) => {
+          draft.request = request;
+        },
       });
+      const raw = result.response;
+      draft.raw = raw;
+      draft.request = result.request;
+      draft.metrics = result.metrics;
+      draft.requestMs = result.elapsedMs;
       const elapsed = Date.now() - startedAt;
       this.opts.debug(`response #${requestId}: raw=${debugText(raw)}`, {
         event: "prediction-raw-response",
@@ -168,6 +198,7 @@ export class PredictionController {
           elapsedMs: elapsed,
           currentRequestId: this.requestId,
         });
+        emitTrace("stale", "stale");
         return;
       }
       const currentText = this.opts.getText();
@@ -181,6 +212,7 @@ export class PredictionController {
           currentTextLength: currentText.length,
           currentText,
         });
+        emitTrace("stale", "text-changed");
         return;
       }
       const blockReason = this.opts.getBlockReason();
@@ -191,10 +223,12 @@ export class PredictionController {
           reason: blockReason,
           elapsedMs: elapsed,
         });
+        emitTrace("stale", blockReason);
         return;
       }
 
       const completion = cleanupCompletion({ before: baseText, raw });
+      draft.completion = completion;
       this.opts.debug(`clean #${requestId}: ${debugText(completion)}`, {
         event: "prediction-clean",
         requestId,
@@ -204,6 +238,7 @@ export class PredictionController {
       });
 
       const rejectionReason = getCompletionRejectionReason(completion);
+      draft.rejectReason = rejectionReason;
       if (rejectionReason) {
         this.opts.debug(`drop #${requestId}: ${rejectionReason} after ${elapsed}ms`, {
           event: "prediction-drop",
@@ -212,6 +247,7 @@ export class PredictionController {
           elapsedMs: elapsed,
           completion,
         });
+        emitTrace("filtered", rejectionReason);
         return;
       }
 
@@ -225,12 +261,17 @@ export class PredictionController {
           completion,
         },
       );
-      this.opts.onPrediction({
-        baseText,
-        text: completion,
-        requestId,
-        createdAt: Date.now(),
-      });
+      draft.hint = "shown";
+      draft.finishedAt = Date.now();
+      this.opts.onPrediction(
+        {
+          baseText,
+          text: completion,
+          requestId,
+          createdAt: draft.finishedAt,
+        },
+        draft,
+      );
     } catch (error) {
       const elapsed = Date.now() - startedAt;
       const formattedError = formatError(error);
@@ -247,12 +288,48 @@ export class PredictionController {
           timedOut,
         },
       );
+      draft.requestMs = elapsed;
+      draft.error = { message: formattedError, timedOut, aborted: isAbort };
+      // A superseded request aborts by design; recording it as a failure would drown the
+      // real errors in typing noise.
+      emitTrace(timedOut || !isAbort ? "error" : "stale", timedOut ? "timeout" : "aborted");
       // Silent failure is best for typing-time autocomplete unless debug is enabled.
     } finally {
       clearTimeout(timeout);
       if (this.abort === controller) this.abort = null;
       if (this.activeRequestId === requestId) this.activeRequestId = null;
     }
+  }
+
+  private createDraft(
+    baseText: string,
+    requestId: number,
+    scheduledAt: number,
+    startedAt: number,
+    context: EditorContextSnapshot,
+  ): CompletionTraceDraft {
+    return {
+      requestId,
+      hint: "stale",
+      reason: null,
+      prefix: baseText,
+      suffix: "",
+      context,
+      model: this.opts.config.model,
+      promptMode: this.opts.config.promptMode,
+      resolvedPromptMode: resolvePromptMode(this.opts.config),
+      request: null,
+      raw: null,
+      completion: null,
+      rejectReason: null,
+      metrics: null,
+      scheduledAt,
+      startedAt,
+      finishedAt: startedAt,
+      requestMs: null,
+      debounceMs: this.opts.config.debounceMs,
+      error: null,
+    };
   }
 }
 
@@ -263,8 +340,8 @@ export class OllamaPredictor {
     before: string,
     after: string,
     signal: AbortSignal,
-    trace?: { requestId: number; debug: DebugLogger },
-  ): Promise<string> {
+    trace?: OllamaTraceContext,
+  ): Promise<OllamaPredictionResult> {
     return predictWithOllama(before, after, signal, this.config, trace);
   }
 }

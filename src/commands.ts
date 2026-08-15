@@ -19,6 +19,9 @@ import {
   KNOWN_MODEL_PRESETS,
   MODEL_SELECTION_ENTRY_TYPE
 } from "./constants.js";
+import { getDebugTraceFile } from "./debug-trace.js";
+import { TRACE_FILE_PREFIX } from "./trace-schema.js";
+import { getDailyTraceFile } from "./trace-writer.js";
 import type { GhostVimWrapper } from "./editor-wrapper.js";
 import {
   formatAutocompleteModelStatus,
@@ -73,7 +76,7 @@ export function registerAutocompleteCommands({
         "  /ac model default <model> [<mode>] Update default model & prompt mode",
         "  /ac model list                Display all supported models, presets & aliases as a report",
         "  /ac status                    Verify Ollama connection and report active model",
-        "  /ac debug [on|off]            Toggle debug widget and JSONL file tracing",
+        "  /ac debug [on|off]            Toggle debug widget and verbose event tracing",
         "  /ac alias add <model> <alias> Add a custom alias for a model",
         "  /ac alias list [<model>]      List aliases for a model (or all aliases if omitted)",
         "  /ac alias delete <model> <alias> Delete a specific alias for a model",
@@ -84,16 +87,19 @@ export function registerAutocompleteCommands({
     );
   };
 
+  const parseToggle = (arg: string): boolean | null => {
+    if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) return true;
+    if (["off", "0", "false", "no", "disable", "disabled"].includes(arg)) return false;
+    return null;
+  };
+
   const handleAcDebug: CommandHandler = async (subArgs, ctx) => {
     const arg = subArgs.trim().toLowerCase();
     let nextEnabled: boolean;
 
-    if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) {
-      nextEnabled = true;
-    } else if (
-      ["off", "0", "false", "no", "disable", "disabled"].includes(arg)
-    ) {
-      nextEnabled = false;
+    const toggle = parseToggle(arg);
+    if (toggle !== null) {
+      nextEnabled = toggle;
     } else if (!arg) {
       nextEnabled = !debugState.enabled;
     } else {
@@ -107,7 +113,7 @@ export function registerAutocompleteCommands({
     if (!nextEnabled) {
       emitDebug?.(ctx, "debug: disabled", {
         event: "debug-disabled",
-        traceFile: config.debugTraceFile,
+        debugFile: getDebugTraceFile(config),
         fileOnly: true
       });
       debugState.enabled = false;
@@ -120,14 +126,15 @@ export function registerAutocompleteCommands({
 
     debugState.enabled = true;
     debugState.history.length = 0;
+    const debugFile = getDebugTraceFile(config);
     emitDebug?.(ctx, "debug: enabled", {
       event: "debug-enabled",
-      traceFile: config.debugTraceFile,
+      debugFile,
       fileOnly: true
     });
     setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
       "pi-ghost-vim debug enabled",
-      `trace=${config.debugTraceFile}`,
+      `debug=${debugFile}`,
       `url=${config.ollamaUrl}`,
       `model=${config.model}`,
       `prompt=${describePromptMode(config)}`,
@@ -137,7 +144,8 @@ export function registerAutocompleteCommands({
     ctx.ui.notify(
       [
         `pi-ghost-vim debug enabled`,
-        `trace file: ${config.debugTraceFile}`
+        `debug file: ${debugFile}`,
+        `trace file: ${getDailyTraceFile(config.traceDir, TRACE_FILE_PREFIX)}`
       ].join("\n"),
       "info"
     );

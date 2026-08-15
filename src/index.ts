@@ -13,6 +13,7 @@ import {
 } from "./config.js";
 import { registerAutocompleteCommands, type DebugState } from "./commands.js";
 import { DebugTraceWriter } from "./debug-trace.js";
+import { TraceRecorder } from "./trace-recorder.js";
 import {
   GhostVimWrapper,
   unwrapGhostFactory,
@@ -33,6 +34,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
     history: [],
   };
   const wrappers = new Set<GhostVimWrapper>();
+  const recorder = new TraceRecorder(config);
   let sessionTraceWriter: DebugTraceWriter | null = null;
 
   const disposeWrappers = () => {
@@ -40,19 +42,13 @@ export default function ghostVim(pi: ExtensionAPI): void {
     wrappers.clear();
   };
 
-  const debug = (
-    ctx: ExtensionContext,
-    message: string,
-    details?: DebugTraceDetails & { skipSessionTrace?: boolean },
-  ) => {
+  const debug = (ctx: ExtensionContext, message: string, details?: DebugTraceDetails) => {
     if (!debugState.enabled) return;
 
-    if (!details?.skipSessionTrace) {
-      if (!sessionTraceWriter) {
-        sessionTraceWriter = new DebugTraceWriter(config);
-      }
-      sessionTraceWriter.write(message, details);
+    if (!sessionTraceWriter) {
+      sessionTraceWriter = new DebugTraceWriter(config, recorder.sessionId);
     }
+    sessionTraceWriter.write(message, details);
 
     if (details?.fileOnly) return;
 
@@ -93,9 +89,6 @@ export default function ghostVim(pi: ExtensionAPI): void {
       if (!enabled) {
         sessionTraceWriter?.close();
         sessionTraceWriter = null;
-        for (const wrapper of wrappers) {
-          wrapper.traceWriter.close();
-        }
       }
     },
   });
@@ -117,7 +110,9 @@ export default function ghostVim(pi: ExtensionAPI): void {
     debugState.enabled = debugState.enabled || config.debug;
     debug(ctx, `session_start model=${config.model} prompt=${describePromptMode(config)} url=${config.ollamaUrl}`, {
       event: "session-start",
-      traceFile: config.debugTraceFile,
+      sessionId: recorder.sessionId,
+      trace: config.trace,
+      traceFile: recorder.currentFile(),
     });
 
     const factory = ((tui, theme, keybindings) => {
@@ -132,6 +127,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
         baseEditor: baseEditor as GhostBaseEditor,
         getExternalMode: () => vimMode,
         config,
+        recorder,
         debug: (message, details) => debug(ctx, message, details),
         isDebugEnabled: () => debugState.enabled,
       });
@@ -145,6 +141,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    // Disposing the wrappers first flushes any suggestion still waiting for an outcome.
     disposeWrappers();
     debug(ctx, "session_shutdown", { event: "session-shutdown", fileOnly: true });
     sessionTraceWriter?.close();
