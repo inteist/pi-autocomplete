@@ -1,5 +1,9 @@
 import type { KnownModelPreset, PromptMode } from "./types.js";
 
+/** Stamped into every trace record; keep in sync with package.json. */
+export const EXTENSION_VERSION = "0.1.0";
+export const TRACE_TOOL_NAME = "pi-ghost-vim";
+
 export const DEFAULT_MODEL = "gemma4:e4b";
 export const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 export const DEFAULT_KEEP_ALIVE = "30m";
