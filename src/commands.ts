@@ -13,7 +13,12 @@ import {
   saveAliases,
   setModelAlias
 } from "./aliases.js";
-import { describePromptMode, saveActiveModel, saveDefaultModel } from "./config.js";
+import {
+  describePromptMode,
+  saveActiveModel,
+  saveDefaultModel,
+  saveTraceEnabled
+} from "./config.js";
 import {
   DEBUG_WIDGET_KEY,
   KNOWN_MODEL_PRESETS,
@@ -21,7 +26,7 @@ import {
 } from "./constants.js";
 import { getDebugTraceFile } from "./debug-trace.js";
 import { TRACE_FILE_PREFIX } from "./trace-schema.js";
-import { getDailyTraceFile } from "./trace-writer.js";
+import { getDailyTraceFile, summarizeTraceFile } from "./trace-writer.js";
 import type { GhostVimWrapper } from "./editor-wrapper.js";
 import {
   formatAutocompleteModelStatus,
@@ -76,6 +81,7 @@ export function registerAutocompleteCommands({
         "  /ac model default <model> [<mode>] Update default model & prompt mode",
         "  /ac model list                Display all supported models, presets & aliases as a report",
         "  /ac status                    Verify Ollama connection and report active model",
+        "  /ac trace [on|off]            Show or toggle autocomplete trace recording",
         "  /ac debug [on|off]            Toggle debug widget and verbose event tracing",
         "  /ac alias add <model> <alias> Add a custom alias for a model",
         "  /ac alias list [<model>]      List aliases for a model (or all aliases if omitted)",
@@ -91,6 +97,65 @@ export function registerAutocompleteCommands({
     if (["on", "1", "true", "yes", "enable", "enabled"].includes(arg)) return true;
     if (["off", "0", "false", "no", "disable", "disabled"].includes(arg)) return false;
     return null;
+  };
+
+  const formatTraceStatus = (): string[] => {
+    const file = getDailyTraceFile(config.traceDir, TRACE_FILE_PREFIX);
+    const summary = summarizeTraceFile(file);
+    const lines = [
+      "=== Autocomplete Traces ===",
+      `recording: ${config.trace ? "on" : "off"}`,
+      `directory: ${config.traceDir}`,
+      `today's file: ${file}`,
+      `debug stream: ${getDebugTraceFile(config)}`
+    ];
+
+    if (!summary.exists) {
+      lines.push("records today: none yet");
+      return lines;
+    }
+
+    const acceptRate =
+      summary.shown > 0 ? Math.round((summary.accepted / summary.shown) * 100) : 0;
+    lines.push(
+      `records today: ${summary.records} (${Math.round(summary.bytes / 1024)} KB)`,
+      `completions: ${summary.completions} - ${summary.shown} shown, ${summary.accepted} accepted (${acceptRate}% of shown)`,
+      `not shown: ${summary.filtered} filtered, ${summary.stale} stale, ${summary.errors} errors`,
+      `accepted characters: ${summary.acceptedChars}`,
+      `submitted prompts: ${summary.submissions}`
+    );
+    return lines;
+  };
+
+  const handleAcTrace: CommandHandler = async (subArgs, ctx) => {
+    const arg = subArgs.trim().toLowerCase();
+
+    if (!arg || arg === "status") {
+      ctx.ui.notify(formatTraceStatus().join("\n"), "info");
+      return;
+    }
+
+    const nextEnabled = parseToggle(arg);
+    if (nextEnabled === null) {
+      ctx.ui.notify(
+        "Invalid argument for trace. Usage: /ac trace [on|off]",
+        "warning"
+      );
+      return;
+    }
+
+    // Flush first: suggestions still waiting for an outcome were recorded under the old
+    // setting, and dropping them would lose whatever the user did with them.
+    for (const wrapper of wrappers) wrapper.traces.flush("trace-toggled");
+    config.trace = nextEnabled;
+    saveTraceEnabled(nextEnabled);
+
+    ctx.ui.notify(
+      nextEnabled
+        ? formatTraceStatus().join("\n")
+        : `autocomplete trace recording disabled\nexisting traces: ${config.traceDir}`,
+      "info"
+    );
   };
 
   const handleAcDebug: CommandHandler = async (subArgs, ctx) => {
@@ -408,6 +473,9 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
           break;
         case "status":
           await handleAcStatus(subcommandArgs, ctx);
+          break;
+        case "trace":
+          await handleAcTrace(subcommandArgs, ctx);
           break;
         case "debug":
           await handleAcDebug(subcommandArgs, ctx);
