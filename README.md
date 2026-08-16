@@ -1,8 +1,8 @@
-# pi-ghost-vim
+# pi-autocomplete
 
-Local Copilot-style ghost autocomplete for the Pi prompt editor, designed to wrap `pi-vim` / `pi-vim-mode` instead of replacing it.
+Local Copilot-style autocomplete for the Pi prompt editor, designed to wrap `pi-vim` / `pi-vim-mode` instead of replacing it.
 
-The extension asks local Ollama for end-of-prompt completions and only intercepts `Tab` when a valid ghost prediction is visible in insert mode.
+The extension asks local Ollama for end-of-prompt completions and only intercepts `Tab` when a valid autocomplete prediction is visible in insert mode.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ pi -e pi-vim-mode -e ./index.ts
 or, from an absolute path:
 
 ```bash
-pi -e pi-vim-mode -e /path/to/pi-ghost-vim/index.ts
+pi -e pi-vim-mode -e /path/to/pi-autocomplete/index.ts
 ```
 
 For auto-discovery, copy or symlink this directory into a Pi extension/package location, or use Pi package settings with the `pi.extensions` entry in `package.json`.
@@ -59,38 +59,38 @@ Primary command namespace:
 
 - Insert mode only.
 - Predictions are debounced and stale requests are aborted/ignored.
-- `Tab` with a visible ghost accepts the next chunk.
+- `Tab` with a visible autocomplete accepts the next chunk.
 - `Tab` again within 350ms accepts the remaining prediction.
-- `Tab` without a visible ghost is delegated to Pi/pi-vim.
-- `Escape`, normal typing, cursor movement, or leaving insert mode clears the ghost.
-- Slash commands, `@` mentions, and likely path tokens suppress local ghost predictions.
+- `Tab` without a visible autocomplete is delegated to Pi/pi-vim.
+- `Escape`, normal typing, cursor movement, or leaving insert mode clears the autocomplete.
+- Slash commands, `@` mentions, and likely path tokens suppress local autocomplete predictions.
 
-The extension renders a dim below-editor preview and also attempts best-effort inline ghost rendering using Pi TUI's cursor marker. Set `PI_GHOST_INLINE=0` to disable inline injection.
+The extension renders a dim below-editor preview and also attempts best-effort inline autocomplete rendering using Pi TUI's cursor marker. Set `PI_AUTOCOMPLETE_INLINE=0` to disable inline injection.
 
 ## Configuration
 
 Environment variables:
 
 ```bash
-PI_GHOST_MODEL=gemma4:e4b
-PI_GHOST_PROMPT_MODE=auto
-PI_GHOST_OLLAMA_URL=http://127.0.0.1:11434
-PI_GHOST_KEEP_ALIVE=30m
-PI_GHOST_DEBOUNCE_MS=250
-PI_GHOST_TIMEOUT_MS=2500
-PI_GHOST_CHECK_TIMEOUT_MS=10000
-PI_GHOST_DOUBLE_TAB_MS=350
-PI_GHOST_MAX_TOKENS=48
-PI_GHOST_MIN_CHARS=8
-PI_GHOST_INLINE=1
-PI_GHOST_DEBUG=0
+PI_AUTOCOMPLETE_MODEL=gemma4:e4b
+PI_AUTOCOMPLETE_PROMPT_MODE=auto
+PI_AUTOCOMPLETE_OLLAMA_URL=http://127.0.0.1:11434
+PI_AUTOCOMPLETE_KEEP_ALIVE=30m
+PI_AUTOCOMPLETE_DEBOUNCE_MS=250
+PI_AUTOCOMPLETE_TIMEOUT_MS=2500
+PI_AUTOCOMPLETE_CHECK_TIMEOUT_MS=10000
+PI_AUTOCOMPLETE_DOUBLE_TAB_MS=350
+PI_AUTOCOMPLETE_MAX_TOKENS=48
+PI_AUTOCOMPLETE_MIN_CHARS=8
+PI_AUTOCOMPLETE_INLINE=1
+PI_AUTOCOMPLETE_DEBUG=0
 PI_AC_TRACE=1
 PI_AC_TRACE_DIR=~/.pi/ac-traces
 ```
 
 ### Autocomplete prompt modes
 
-`PI_GHOST_PROMPT_MODE=auto` chooses handling from the active model:
+`PI_AUTOCOMPLETE_PROMPT_MODE=auto` chooses handling from the active model:
 
 - Qwen coder models use FIM raw completion markers with Ollama `/api/generate` and `raw: true`:
 
@@ -102,14 +102,14 @@ PI_AC_TRACE_DIR=~/.pi/ac-traces
 
 - Other models, including `gemma4:e2b`, use an instruction-style continuation prompt with a `<cursor>` marker. Gemma models are sent with raw generation because Ollama's Gemma renderer/parser can otherwise return an empty `/api/generate` response for continuation prompts.
 
-You can override the mode with `/ac model [model] qwen-fim`, `/ac model [model] instruct` or `/ac model [model] lfm-prefill`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no ghost text is shown.
+You can override the mode with `/ac model [model] qwen-fim`, `/ac model [model] instruct` or `/ac model [model] lfm-prefill`. Model output is post-processed before display: special tokens, prompt echo, labels, and chat/refusal/meta responses are removed or rejected. If the result is not a clean continuation, no autocomplete text is shown.
 
 ### LFM2.5 prefill mode
 
 `LFM25:2.6b` (Liquid `LFM2.5-2.6B`) is a *reasoning* model: its chat template always opens
 the assistant turn with `<think>`, and it will spend hundreds of tokens reasoning before it
 answers anything. Sent as a normal templated request it never produces a completion inside
-the ghost token budget, and Ollama's `think: false` does not suppress it either. Three
+the autocomplete token budget, and Ollama's `think: false` does not suppress it either. Three
 things make it usable as an autocompleter:
 
 1. **Raw generation with a pre-closed think block.** The prompt is built by hand as raw
@@ -132,7 +132,7 @@ things make it usable as an autocompleter:
 Sampling stays on the extension's deterministic defaults (`temperature=0`,
 `repeat_penalty=1.05`). Liquid's recommended settings for this model (`temperature=0.1`,
 `top_k=50`, `repeat_penalty=1.1`) measured indistinguishably on completion quality here, and
-greedy decoding keeps ghost text stable while typing.
+greedy decoding keeps autocomplete text stable while typing.
 
 Typical end-to-end latency for the shipped prompt on Apple Silicon with the `Q8_0` build is
 ~230ms median, ~640ms worst case, with the model usually stopping on its own after fewer
@@ -170,7 +170,7 @@ which is about attributing committed lines rather than keystroke-time suggestion
 | `outcome.accepted_text` | The part of the suggestion that made it into the buffer. |
 | `outcome.typed_text` | What actually followed that prefix, resolved from the submitted prompt where possible. |
 | `outcome.match` | Suggestion against reality: shared prefix length and ratio, raw and normalised. |
-| `timing.*` | Debounce served, HTTP roundtrip, keystroke-to-ghost latency, and Ollama's own token timings. |
+| `timing.*` | Debounce served, HTTP roundtrip, keystroke-to-autocomplete latency, and Ollama's own token timings. |
 
 A `submission` record is written per submitted prompt with the final text and the
 composition stats, including `accepted_ratio` - how much of the prompt came from
@@ -202,12 +202,12 @@ day file is enough to drop it.
 
 ### Debug tracing
 
-`/ac debug on` (or `PI_GHOST_DEBUG=1`) adds the below-editor debug widget and a second,
+`/ac debug on` (or `PI_AUTOCOMPLETE_DEBUG=1`) adds the below-editor debug widget and a second,
 much noisier daily file under `<trace dir>/debug/`: one line per internal event -
 scheduling, skip and drop reasons, editor input, the Ollama request and response, cleanup,
-accepts and clears. That is the file to read when chasing why one specific ghost did or
+accepts and clears. That is the file to read when chasing why one specific autocomplete did or
 did not appear; the completion traces above are the file to analyse in bulk.
 
 ## Notes
 
-This is intentionally a thin wrapper: pi-vim remains the source of truth for editing and modal behavior. The extension observes text, predicts after a pause, displays ghost text, and consumes `Tab` only when accepting a visible prediction. It also forwards Pi `CustomEditor` action/shortcut hooks to the wrapped editor so shortcuts such as thinking-level bindings continue to work.
+This is intentionally a thin wrapper: pi-vim remains the source of truth for editing and modal behavior. The extension observes text, predicts after a pause, displays autocomplete text, and consumes `Tab` only when accepting a visible prediction. It also forwards Pi `CustomEditor` action/shortcut hooks to the wrapped editor so shortcuts such as thinking-level bindings continue to work.

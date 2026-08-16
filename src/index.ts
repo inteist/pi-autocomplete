@@ -3,7 +3,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { DEBUG_WIDGET_KEY, GHOST_FACTORY_MARKER } from "./constants.js";
+import { DEBUG_WIDGET_KEY, AUTOCOMPLETE_FACTORY_MARKER } from "./constants.js";
 import {
   applyStoredModelSelection,
   describePromptMode,
@@ -15,25 +15,25 @@ import { registerAutocompleteCommands, type DebugState } from "./commands.js";
 import { DebugTraceWriter } from "./debug-trace.js";
 import { TraceRecorder } from "./trace-recorder.js";
 import {
-  GhostVimWrapper,
-  unwrapGhostFactory,
-  type GhostEditorFactory,
+  AutocompleteVimWrapper,
+  unwrapAutocompleteFactory,
+  type AutocompleteEditorFactory,
 } from "./editor-wrapper.js";
-import { clearGhostWidget, dimWithTheme, setGhostWidget } from "./ui.js";
+import { clearAutocompleteWidget, dimWithTheme, setAutocompleteWidget } from "./ui.js";
 import type {
   DebugTraceDetails,
   EditorFactory,
-  GhostBaseEditor,
+  AutocompleteBaseEditor,
 } from "./types.js";
 
-export default function ghostVim(pi: ExtensionAPI): void {
+export default function autocompleteVim(pi: ExtensionAPI): void {
   let vimMode = "insert";
   const config = readConfigFromEnv();
   const debugState: DebugState = {
     enabled: config.debug,
     history: [],
   };
-  const wrappers = new Set<GhostVimWrapper>();
+  const wrappers = new Set<AutocompleteVimWrapper>();
   const recorder = new TraceRecorder(config);
   let sessionTraceWriter: DebugTraceWriter | null = null;
 
@@ -56,7 +56,7 @@ export default function ghostVim(pi: ExtensionAPI): void {
     const line = dimWithTheme(ctx, `[${time}] ${message}`);
     debugState.history.push(line);
     while (debugState.history.length > 8) debugState.history.shift();
-    setGhostWidget(ctx, DEBUG_WIDGET_KEY, debugState.history);
+    setAutocompleteWidget(ctx, DEBUG_WIDGET_KEY, debugState.history);
   };
 
   const eventBus = (pi as ExtensionAPI & {
@@ -96,11 +96,11 @@ export default function ghostVim(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     disposeWrappers();
     const currentFactory = ctx.ui.getEditorComponent?.() as EditorFactory | undefined;
-    const previousFactory = unwrapGhostFactory(currentFactory);
+    const previousFactory = unwrapAutocompleteFactory(currentFactory);
 
     if (!previousFactory) {
       ctx.ui.notify?.(
-        "pi-ghost-vim: no existing custom editor found; load this after pi-vim",
+        "pi-autocomplete: no existing custom editor found; load this after pi-vim",
         "warning",
       );
     }
@@ -120,11 +120,11 @@ export default function ghostVim(pi: ExtensionAPI): void {
         ? previousFactory(tui, theme, keybindings)
         : new CustomEditor(tui, theme, keybindings);
 
-      const wrapper = new GhostVimWrapper({
+      const wrapper = new AutocompleteVimWrapper({
         ctx,
         tui,
         keybindings,
-        baseEditor: baseEditor as GhostBaseEditor,
+        baseEditor: baseEditor as AutocompleteBaseEditor,
         getExternalMode: () => vimMode,
         config,
         recorder,
@@ -133,9 +133,9 @@ export default function ghostVim(pi: ExtensionAPI): void {
       });
       wrappers.add(wrapper);
       return wrapper;
-    }) as GhostEditorFactory;
+    }) as AutocompleteEditorFactory;
 
-    factory[GHOST_FACTORY_MARKER] = true;
+    factory[AUTOCOMPLETE_FACTORY_MARKER] = true;
     factory.previousFactory = previousFactory;
     ctx.ui.setEditorComponent(factory);
   });
@@ -146,6 +146,6 @@ export default function ghostVim(pi: ExtensionAPI): void {
     debug(ctx, "session_shutdown", { event: "session-shutdown", fileOnly: true });
     sessionTraceWriter?.close();
     sessionTraceWriter = null;
-    clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
+    clearAutocompleteWidget(ctx, DEBUG_WIDGET_KEY);
   });
 }

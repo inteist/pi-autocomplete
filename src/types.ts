@@ -21,7 +21,7 @@ export type KnownModelPreset = {
   runCommand: string;
 };
 
-export type GhostConfig = {
+export type AutocompleteConfig = {
   model: string;
   promptMode: PromptMode;
   ollamaUrl: string;
@@ -40,7 +40,7 @@ export type GhostConfig = {
   traceDir: string;
 };
 
-export type GhostState = {
+export type AutocompleteState = {
   baseText: string;
   text: string;
   requestId: number;
@@ -79,7 +79,7 @@ export type EditorFactory = (
   keybindings: KeybindingsManager,
 ) => EditorComponent;
 
-export type GhostBaseEditor = EditorComponent &
+export type AutocompleteBaseEditor = EditorComponent &
   Partial<Focusable> & {
     dispose?: () => void;
     getMode?: () => string;
@@ -94,13 +94,13 @@ export type GhostBaseEditor = EditorComponent &
     setAutocompleteProvider?: (provider: AutocompleteProvider) => void;
   };
 
-export type GhostWrapperOptions = {
+export type AutocompleteWrapperOptions = {
   ctx: ExtensionContext;
   tui: TUI;
   keybindings: KeybindingsManager;
-  baseEditor: GhostBaseEditor;
+  baseEditor: AutocompleteBaseEditor;
   getExternalMode: ModeProvider;
-  config: GhostConfig;
+  config: AutocompleteConfig;
   recorder: TraceRecorder;
   debug: DebugLogger;
   isDebugEnabled?: () => boolean;

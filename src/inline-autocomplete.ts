@@ -5,23 +5,23 @@ import {
 } from "@earendil-works/pi-tui";
 import { SOFTWARE_CURSOR_RESETS, SOFTWARE_CURSOR_START } from "./constants.js";
 
-export function injectGhostAfterCursor(
+export function injectAutocompleteAfterCursor(
   lines: string[],
-  ghost: string,
+  autocomplete: string,
   width: number,
   dim: (text: string) => string,
 ): string[] {
-  const oneLineGhost = ghost.split("\n")[0] ?? "";
-  if (!oneLineGhost) return lines;
+  const oneLineAutocomplete = autocomplete.split("\n")[0] ?? "";
+  if (!oneLineAutocomplete) return lines;
 
   const markerLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
   if (markerLine === -1) return lines;
 
-  const styledGhost = dim(oneLineGhost);
+  const styledAutocomplete = dim(oneLineAutocomplete);
   const line = lines[markerLine]!;
   const markerIndex = line.indexOf(CURSOR_MARKER);
-  const insertAt = findGhostInsertIndex(line, markerIndex);
-  const injected = line.slice(0, insertAt) + styledGhost + line.slice(insertAt);
+  const insertAt = findAutocompleteInsertIndex(line, markerIndex);
+  const injected = line.slice(0, insertAt) + styledAutocomplete + line.slice(insertAt);
   const fitted =
     visibleWidth(injected.replaceAll(CURSOR_MARKER, "")) > width
       ? truncateToWidth(injected, width, "")
@@ -34,7 +34,7 @@ export function injectGhostAfterCursor(
   ];
 }
 
-function findGhostInsertIndex(line: string, markerIndex: number): number {
+function findAutocompleteInsertIndex(line: string, markerIndex: number): number {
   const afterMarker = markerIndex + CURSOR_MARKER.length;
 
   if (line.startsWith(SOFTWARE_CURSOR_START, afterMarker)) {

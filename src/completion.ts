@@ -32,7 +32,7 @@ function stripPromptEcho(before: string, completion: string): string {
  * Models that are handed a right-trimmed prefix (see `trimLfmPrefillEnd`) emit the
  * separating space themselves, and models that are handed the untrimmed text sometimes
  * emit one anyway. Either way the space is already on screen, so keeping it would render
- * the ghost one column too far right.
+ * the autocomplete one column too far right.
  */
 function alignLeadingWhitespace(before: string, completion: string): string {
   if (!/[ \t]$/.test(before)) return completion;
@@ -156,7 +156,7 @@ export function cleanupCompletion(args: { before: string; raw: string }): string
 }
 
 /**
- * Checks whether a cleaned completion should be displayed as a ghost preview.
+ * Checks whether a cleaned completion should be displayed as an autocomplete preview.
  * 
  * @param completion The cleaned candidate completion.
  * @returns True if the completion is valid and should be shown.
@@ -181,7 +181,7 @@ export function getCompletionRejectionReason(completion: string): string | null 
   // Reject model outputs that contain assistant meta-commentary, apologies, or conversational remarks.
   if (looksLikeChatResponse(s)) return "chat-like";
 
-  // Prevent spamming too many lines/sentences in a single inline ghost prediction.
+  // Prevent spamming too many lines/sentences in a single inline autocomplete prediction.
   const sentenceCount = (s.match(/[.!?]/g) ?? []).length;
   if (sentenceCount > 2) return "too-many-sentences";
 
@@ -211,7 +211,7 @@ export function takeNextChunk(s: string): { take: string; rest: string } {
 }
 
 /**
- * Evaluates whether autocomplete ghost text should be suppressed based on the
+ * Evaluates whether autocomplete text should be suppressed based on the
  * current cursor-left context.
  *
  * It suppresses predictions if:
@@ -224,7 +224,7 @@ export function takeNextChunk(s: string): { take: string; rest: string } {
  * @param minChars The minimum character threshold to trigger autocomplete.
  * @returns A string representing the suppression reason, or null if autocomplete is allowed.
  */
-export function getGhostSuppressionReason(text: string, minChars: number): string | null {
+export function getAutocompleteSuppressionReason(text: string, minChars: number): string | null {
   const trimmedLength = text.trim().length;
   if (trimmedLength < minChars) return `min-chars ${trimmedLength}/${minChars}`;
 

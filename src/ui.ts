@@ -17,7 +17,7 @@ export function printOllamaStatusOutput(
   ctx.ui.notify([...result.lines, `status: ${status}`].join("\n"), result.ok ? "info" : "warning");
 }
 
-export function setGhostWidget(ctx: ExtensionContext, key: string, lines: string[]): void {
+export function setAutocompleteWidget(ctx: ExtensionContext, key: string, lines: string[]): void {
   const ui = ctx.ui as WidgetCapableUi;
   if (typeof ui.setWidget === "function") {
     ui.setWidget(key, lines.length > 0 ? lines : undefined, {
@@ -29,7 +29,7 @@ export function setGhostWidget(ctx: ExtensionContext, key: string, lines: string
   ui.setStatus?.(key, lines[0]);
 }
 
-export function clearGhostWidget(ctx: ExtensionContext, key: string): void {
+export function clearAutocompleteWidget(ctx: ExtensionContext, key: string): void {
   const ui = ctx.ui as WidgetCapableUi;
   ui.setWidget?.(key, undefined);
   ui.setStatus?.(key, undefined);

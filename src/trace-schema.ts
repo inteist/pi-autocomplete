@@ -35,7 +35,7 @@ export const DEBUG_FILE_PREFIX = "ac-debug";
  *
  * - `accepted_full`    - the whole suggestion was accepted (double-Tab, or chunk by chunk).
  * - `accepted_partial` - some chunks were accepted, the rest was not.
- * - `shown_rejected`   - shown as ghost text and never accepted.
+ * - `shown_rejected`   - shown as autocomplete text and never accepted.
  * - `filtered`         - the model answered but cleanup/validation refused to show it.
  * - `stale`            - the answer arrived after the context had moved on (typing race).
  * - `error`            - the request failed, timed out, or was aborted.
@@ -158,7 +158,7 @@ export type TraceTiming = {
   wait_ms: number;
   /** HTTP roundtrip to Ollama. */
   request_ms: number | null;
-  /** Keystroke to ghost text on screen (or to the decision not to show it). */
+  /** Keystroke to autocomplete text on screen (or to the decision not to show it). */
   total_ms: number;
   ollama: TraceOllamaMetrics | null;
 };
@@ -177,7 +177,7 @@ export type TraceMatch = {
 export type TraceOutcome = {
   status: CompletionStatus;
   shown: boolean;
-  /** Why it was not shown, or how a shown ghost was dismissed (`escape`, `typing`, ...). */
+  /** Why it was not shown, or how a shown autocomplete was dismissed (`escape`, `typing`, ...). */
   reason: string | null;
   accepted_chars: number;
   /** The portion of the suggestion that made it into the buffer. */
@@ -194,7 +194,7 @@ export type TraceOutcome = {
   typed_source: TypedSource;
   /** True when the user edited back into the prefix, so the comparison is partial. */
   diverged: boolean;
-  /** Ghost shown to outcome resolved. */
+  /** Autocomplete shown to outcome resolved. */
   decision_ms: number | null;
   match: TraceMatch | null;
 };

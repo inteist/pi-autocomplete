@@ -6,10 +6,10 @@ import {
   type EditorComponent,
   type Focusable,
 } from "@earendil-works/pi-tui";
-import { GHOST_FACTORY_MARKER } from "./constants.js";
+import { AUTOCOMPLETE_FACTORY_MARKER } from "./constants.js";
 import { debugText, takeNextChunk } from "./completion.js";
 import { describePromptMode } from "./config.js";
-import { injectGhostAfterCursor } from "./inline-ghost.js";
+import { injectAutocompleteAfterCursor } from "./inline-autocomplete.js";
 import { OllamaPredictor, PredictionController } from "./prediction-controller.js";
 import {
   CompletionTraceTracker,
@@ -20,21 +20,21 @@ import type {
   DebugTraceDetails,
   EditorFactory,
   ExtensionShortcutHandler,
-  GhostBaseEditor,
-  GhostState,
-  GhostWrapperOptions,
+  AutocompleteBaseEditor,
+  AutocompleteState,
+  AutocompleteWrapperOptions,
 } from "./types.js";
 
-export type GhostEditorFactory = EditorFactory & {
-  [GHOST_FACTORY_MARKER]?: true;
+export type AutocompleteEditorFactory = EditorFactory & {
+  [AUTOCOMPLETE_FACTORY_MARKER]?: true;
   previousFactory?: EditorFactory;
 };
 
-export class GhostVimWrapper implements EditorComponent, Focusable {
+export class AutocompleteVimWrapper implements EditorComponent, Focusable {
   public readonly actionHandlers: Map<string, ActionHandler>;
 
   public readonly traces: CompletionTraceTracker;
-  private ghost: GhostState | null = null;
+  private autocomplete: AutocompleteState | null = null;
   private lastTabAt = 0;
   private ownFocused = false;
   private disposed = false;
@@ -45,7 +45,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   private readonly predictions: PredictionController;
   private _submitHandler: ((text: string) => void) | undefined;
 
-  constructor(private readonly opts: GhostWrapperOptions) {
+  constructor(private readonly opts: AutocompleteWrapperOptions) {
     this.traces = new CompletionTraceTracker(opts.recorder);
     this.actionHandlers = new ForwardingActionHandlersMap(
       () => this.opts.baseEditor.actionHandlers,
@@ -56,10 +56,10 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       getText: () => this.getText(),
       getBlockReason: () => this.getPredictionBlockReason(),
       debug: (message, details) => this.debug(message, details),
-      onPrediction: (ghost, trace) => {
-        this.ghost = ghost;
-        this.traces.recordShown(trace, ghost.text);
-        this.showGhostPreview(ghost.text);
+      onPrediction: (autocomplete, trace) => {
+        this.autocomplete = autocomplete;
+        this.traces.recordShown(trace, autocomplete.text);
+        this.showAutocompletePreview(autocomplete.text);
         this.requestRender();
       },
       onTrace: (trace) => this.traces.recordUnshown(trace),
@@ -167,12 +167,12 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     if (
       !this.opts.config.inline ||
       !this.isInsertMode() ||
-      !this.hasValidGhost()
+      !this.hasValidAutocomplete()
     ) {
       return lines;
     }
 
-    return injectGhostAfterCursor(lines, this.ghost!.text, width, (text) =>
+    return injectAutocompleteAfterCursor(lines, this.autocomplete!.text, width, (text) =>
       this.dim(text),
     );
   }
@@ -185,12 +185,12 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
         inputPreview: debugText(data),
         mode: this.getMode(),
         textLength: this.getText().length,
-        hasGhost: !!this.ghost,
+        hasAutocomplete: !!this.autocomplete,
       });
     }
 
     if (!this.isInsertMode()) {
-      this.invalidateGhostAndPrediction("mode-change");
+      this.invalidateAutocompleteAndPrediction("mode-change");
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
       return;
@@ -199,14 +199,14 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     const isTab = matchesKey(data, Key.tab);
     const isEscape = matchesKey(data, Key.escape);
 
-    if (isTab && this.hasValidGhost()) {
-      this.handleGhostTab();
+    if (isTab && this.hasValidAutocomplete()) {
+      this.handleAutocompleteTab();
       this.requestRender();
       return;
     }
 
     if (isTab) {
-      this.invalidateGhostAndPrediction("tab");
+      this.invalidateAutocompleteAndPrediction("tab");
       this.lastTabAt = 0;
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
@@ -214,13 +214,13 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     }
 
     if (isEscape) {
-      if (this.hasValidGhost()) {
-        this.invalidateGhostAndPrediction("escape");
+      if (this.hasValidAutocomplete()) {
+        this.invalidateAutocompleteAndPrediction("escape");
         this.requestRender();
         return;
       }
 
-      this.invalidateGhostAndPrediction("escape");
+      this.invalidateAutocompleteAndPrediction("escape");
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
       return;
@@ -229,7 +229,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     this.lastTabAt = 0;
 
     const before = this.getText();
-    this.invalidateGhostAndPrediction("typing");
+    this.invalidateAutocompleteAndPrediction("typing");
 
     this.opts.baseEditor.handleInput?.(data);
 
@@ -264,7 +264,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     if (this.disposed) return;
     this.disposed = true;
     this.predictions.dispose();
-    this.clearGhost("dispose");
+    this.clearAutocomplete("dispose");
     this.traces.flush("dispose");
     this.opts.baseEditor.dispose?.();
   }
@@ -284,7 +284,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
         maxTokens: this.opts.config.maxTokens,
       },
     );
-    this.invalidateGhostAndPrediction("config-change");
+    this.invalidateAutocompleteAndPrediction("config-change");
     this.requestRender();
   }
 
@@ -333,7 +333,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     return this.getMode() === "insert";
   }
 
-  private canShowGhostNow(): boolean {
+  private canShowAutocompleteNow(): boolean {
     return this.getPredictionBlockReason() === null;
   }
 
@@ -345,12 +345,12 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     return null;
   }
 
-  private hasValidGhost(): boolean {
+  private hasValidAutocomplete(): boolean {
     return (
-      !!this.ghost &&
-      this.ghost.text.length > 0 &&
-      this.getText() === this.ghost.baseText &&
-      this.canShowGhostNow()
+      !!this.autocomplete &&
+      this.autocomplete.text.length > 0 &&
+      this.getText() === this.autocomplete.baseText &&
+      this.canShowAutocompleteNow()
     );
   }
 
@@ -382,15 +382,15 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     }
   }
 
-  private handleGhostTab(): void {
+  private handleAutocompleteTab(): void {
     const now = Date.now();
 
     if (now - this.lastTabAt <= this.opts.config.doubleTabMs) {
-      this.opts.debug("accept: whole ghost via double-tab", {
-        event: "ghost-accept-double-tab",
-        ghostLength: this.ghost?.text.length ?? 0,
+      this.opts.debug("accept: whole autocomplete via double-tab", {
+        event: "autocomplete-accept-double-tab",
+        autocompleteLength: this.autocomplete?.text.length ?? 0,
       });
-      this.acceptWholeGhost();
+      this.acceptWholeAutocomplete();
       this.lastTabAt = 0;
       return;
     }
@@ -400,14 +400,14 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   }
 
   private acceptNextChunk(): boolean {
-    if (!this.ghost) return false;
+    if (!this.autocomplete) return false;
 
-    const { take, rest } = takeNextChunk(this.ghost.text);
-    if (!take) return this.ghost.text.length > 0;
+    const { take, rest } = takeNextChunk(this.autocomplete.text);
+    if (!take) return this.autocomplete.text.length > 0;
 
     const nextText = this.getText() + take;
     this.opts.debug(`accept: chunk ${take.length} chars, rest=${rest.length}`, {
-      event: "ghost-accept-chunk",
+      event: "autocomplete-accept-chunk",
       takeLength: take.length,
       restLength: rest.length,
       take,
@@ -418,33 +418,33 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     this.traces.noteAccept(take, rest);
 
     if (rest.length > 0) {
-      this.ghost = {
-        ...this.ghost,
+      this.autocomplete = {
+        ...this.autocomplete,
         baseText: nextText,
         text: rest,
       };
-      this.showGhostPreview(rest);
+      this.showAutocompletePreview(rest);
       return true;
     }
 
-    this.clearGhost("accept");
+    this.clearAutocomplete("accept");
     return false;
   }
 
-  private acceptWholeGhost(): void {
-    if (!this.ghost) return;
+  private acceptWholeAutocomplete(): void {
+    if (!this.autocomplete) return;
 
-    const accepted = this.ghost.text;
+    const accepted = this.autocomplete.text;
     this.opts.debug(`accept: whole ${accepted.length} chars`, {
-      event: "ghost-accept-whole",
-      ghostLength: accepted.length,
-      ghostText: accepted,
+      event: "autocomplete-accept-whole",
+      autocompleteLength: accepted.length,
+      autocompleteText: accepted,
     });
     const nextText = this.getText() + accepted;
     this.setText(nextText);
     this.traces.noteText(nextText);
     this.traces.noteAccept(accepted, "");
-    this.clearGhost("accept");
+    this.clearAutocomplete("accept");
   }
 
   private schedulePrediction(text: string, trigger: string): void {
@@ -464,56 +464,56 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     };
   }
 
-  private invalidateGhostAndPrediction(reason: string): void {
-    this.clearGhost(reason);
+  private invalidateAutocompleteAndPrediction(reason: string): void {
+    this.clearAutocomplete(reason);
     this.predictions.invalidate();
   }
 
-  private clearGhost(reason: string): void {
-    if (this.ghost) {
-      this.traceFileOnly(`clear: ghost #${this.ghost.requestId}`, {
-        event: "ghost-clear",
-        requestId: this.ghost.requestId,
+  private clearAutocomplete(reason: string): void {
+    if (this.autocomplete) {
+      this.traceFileOnly(`clear: autocomplete #${this.autocomplete.requestId}`, {
+        event: "autocomplete-clear",
+        requestId: this.autocomplete.requestId,
         reason,
-        ghostLength: this.ghost.text.length,
-        ghostText: this.ghost.text,
+        autocompleteLength: this.autocomplete.text.length,
+        autocompleteText: this.autocomplete.text,
       });
     }
     this.traces.noteDismiss(reason);
-    this.ghost = null;
-    this.clearGhostPreview();
+    this.autocomplete = null;
+    this.clearAutocompletePreview();
   }
 
-  private showGhostPreview(text: string): void {
+  private showAutocompletePreview(text: string): void {
     const oneLine = text.split("\n")[0] ?? "";
     if (!oneLine) {
-      this.clearGhostPreview();
+      this.clearAutocompletePreview();
       return;
     }
 
     const preview = oneLine.length > 100 ? `${oneLine.slice(0, 100)}…` : oneLine;
-    const line = this.dim(`ghost: ${preview}`);
+    const line = this.dim(`autocomplete: ${preview}`);
     const ui = this.opts.ctx.ui as ExtensionContext["ui"] & {
       setWidget?: ExtensionContext["ui"]["setWidget"];
       setStatus?: ExtensionContext["ui"]["setStatus"];
     };
 
     if (typeof ui.setWidget === "function") {
-      ui.setWidget("pi-ghost-vim", [line], { placement: "belowEditor" });
+      ui.setWidget("pi-autocomplete", [line], { placement: "belowEditor" });
       return;
     }
 
-    ui.setStatus?.("pi-ghost-vim", line);
+    ui.setStatus?.("pi-autocomplete", line);
   }
 
-  private clearGhostPreview(): void {
+  private clearAutocompletePreview(): void {
     const ui = this.opts.ctx.ui as ExtensionContext["ui"] & {
       setWidget?: ExtensionContext["ui"]["setWidget"];
       setStatus?: ExtensionContext["ui"]["setStatus"];
     };
 
-    ui.setWidget?.("pi-ghost-vim", undefined);
-    ui.setStatus?.("pi-ghost-vim", undefined);
+    ui.setWidget?.("pi-autocomplete", undefined);
+    ui.setStatus?.("pi-autocomplete", undefined);
   }
 
   private shouldTraceFileOnly(): boolean {
@@ -576,8 +576,8 @@ class ForwardingActionHandlersMap extends Map<string, ActionHandler> {
   }
 }
 
-export function unwrapGhostFactory(factory: EditorFactory | undefined): EditorFactory | undefined {
-  const ghostFactory = factory as GhostEditorFactory | undefined;
-  if (ghostFactory?.[GHOST_FACTORY_MARKER]) return ghostFactory.previousFactory;
+export function unwrapAutocompleteFactory(factory: EditorFactory | undefined): EditorFactory | undefined {
+  const autocompleteFactory = factory as AutocompleteEditorFactory | undefined;
+  if (autocompleteFactory?.[AUTOCOMPLETE_FACTORY_MARKER]) return autocompleteFactory.previousFactory;
   return factory;
 }

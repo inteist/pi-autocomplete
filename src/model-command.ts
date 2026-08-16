@@ -2,7 +2,7 @@ import { DEFAULT_MODEL, DEFAULT_PROMPT_MODE, KNOWN_MODEL_PRESETS } from "./const
 import { describePromptMode, isPromptMode, resolvePromptMode, loadPersistentConfig } from "./config.js";
 import { resolveModelAlias } from "./aliases.js";
 import { shouldUseRawGenerate } from "./ollama.js";
-import type { GhostConfig, PromptMode } from "./types.js";
+import type { AutocompleteConfig, PromptMode } from "./types.js";
 
 export type AutocompleteModelCommandResult =
   | { action: "status" }
@@ -29,7 +29,7 @@ export type AutocompleteModelCommandResult =
  */
 export function parseAutocompleteModelCommand(
   args: string,
-  current: GhostConfig,
+  current: AutocompleteConfig,
 ): AutocompleteModelCommandResult {
   const raw = args.trim();
   const lower = raw.toLowerCase();
@@ -118,14 +118,14 @@ export function parseAutocompleteModelCommand(
  * Formats the current autocomplete model, url, and prompt mode details
  * for presentation in the editor notification.
  */
-export function formatAutocompleteModelStatus(config: GhostConfig): string[] {
+export function formatAutocompleteModelStatus(config: AutocompleteConfig): string[] {
   const pConfig = loadPersistentConfig();
   const defaultModelStr = pConfig.defaultModel 
     ? `${pConfig.defaultModel} (${pConfig.defaultPromptMode ?? "auto"})`
-    : `${process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL} (${process.env.PI_GHOST_PROMPT_MODE ?? DEFAULT_PROMPT_MODE})`;
+    : `${process.env.PI_AUTOCOMPLETE_MODEL ?? DEFAULT_MODEL} (${process.env.PI_AUTOCOMPLETE_PROMPT_MODE ?? DEFAULT_PROMPT_MODE})`;
 
   return [
-    "pi-ghost-vim autocomplete model",
+    "pi-autocomplete model",
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,
     `default model: ${defaultModelStr}`,
@@ -137,7 +137,7 @@ export function formatAutocompleteModelStatus(config: GhostConfig): string[] {
  */
 export function formatKnownModelPresets(): string[] {
   return [
-    "pi-ghost-vim known model presets",
+    "pi-autocomplete known model presets",
     ...KNOWN_MODEL_PRESETS.map(
       (preset) =>
         `${preset.model} — ${preset.label}; mode=${preset.promptMode}; ${preset.runCommand}`,

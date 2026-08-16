@@ -6,9 +6,9 @@ import test from "node:test";
 
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
-import ghostVim from "../src/index.js";
+import autocompleteVim from "../src/index.js";
 import { resolveModelAlias } from "../src/aliases.js";
-import { GhostVimWrapper } from "../src/editor-wrapper.js";
+import { AutocompleteVimWrapper } from "../src/editor-wrapper.js";
 import { cleanupCompletion, getCompletionRejectionReason } from "../src/completion.js";
 import { resolvePromptMode } from "../src/config.js";
 import {
@@ -28,9 +28,9 @@ import {
   formatTraceDate,
   summarizeTraceFile,
 } from "../src/trace-writer.js";
-import type { GhostConfig } from "../src/types.js";
+import type { AutocompleteConfig } from "../src/types.js";
 
-const baseTestConfig: GhostConfig = {
+const baseTestConfig: AutocompleteConfig = {
   model: "LFM25:2.6b",
   promptMode: "auto",
   ollamaUrl: "http://127.0.0.1:11434",
@@ -139,7 +139,7 @@ function useTempAgentDir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-autocomplete-test-"));
   process.env.PI_CODING_AGENT_DIR = dir;
   process.env.PI_AC_TRACE_DIR = path.join(dir, "ac-traces");
-  process.env.PI_GHOST_MODEL = "qwen2.5-coder:1.5b";
+  process.env.PI_AUTOCOMPLETE_MODEL = "qwen2.5-coder:1.5b";
   return dir;
 }
 
@@ -148,7 +148,7 @@ function cleanupTempAgentDir(dir: string): void {
   delete process.env.PI_CODING_AGENT_DIR;
   delete process.env.PI_AC_TRACE_DIR;
   delete process.env.PI_AC_TRACE;
-  delete process.env.PI_GHOST_MODEL;
+  delete process.env.PI_AUTOCOMPLETE_MODEL;
 }
 
 async function readFileEventually(filePath: string, needle: string): Promise<string> {
@@ -179,7 +179,7 @@ test("registers the unified /ac command and handles model status/update", async 
   const dir = useTempAgentDir();
   try {
     const { pi, commands, appendedEntries } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     assert.ok(commands.has("ac"));
 
@@ -192,7 +192,7 @@ test("registers the unified /ac command and handles model status/update", async 
 
     await command.handler("model gemma instruct", ctx);
     const gemmaEntry = appendedEntries.at(-1);
-    assert.equal(gemmaEntry?.customType, "pi-ghost-vim-model");
+    assert.equal(gemmaEntry?.customType, "pi-autocomplete-model");
     assert.deepEqual(
       {
         model: (gemmaEntry?.data as { model?: string }).model,
@@ -227,7 +227,7 @@ test("/ac alias add/list/delete persists aliases and model resolution uses them"
   const dir = useTempAgentDir();
   try {
     const { pi, commands, appendedEntries } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     const command = getAcCommand(commands);
     const ctx = createMockContext();
@@ -259,16 +259,16 @@ test("/ac debug toggles the debug widget and validates arguments", async () => {
   const dir = useTempAgentDir();
   try {
     const { pi, commands } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     const command = getAcCommand(commands);
     const ctx = createMockContext();
 
     await command.handler("debug on", ctx);
-    assert.match(lastNotification(ctx).message, /pi-ghost-vim debug enabled/);
+    assert.match(lastNotification(ctx).message, /pi-autocomplete debug enabled/);
     assert.match(lastNotification(ctx).message, /debug file:/);
     assert.match(lastNotification(ctx).message, /trace file:/);
-    assert.deepEqual(ctx.ui.widgets.at(-1)?.key, "pi-ghost-vim-debug");
+    assert.deepEqual(ctx.ui.widgets.at(-1)?.key, "pi-autocomplete-debug");
     assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("model=qwen2.5-coder:1.5b")));
     assert.ok(ctx.ui.widgets.at(-1)?.value?.some((line) => line.includes("debug=")));
 
@@ -296,8 +296,8 @@ test("/ac debug toggles the debug widget and validates arguments", async () => {
     assert.match(lastNotification(ctx).message, /Invalid argument for debug/);
 
     await command.handler("debug off", ctx);
-    assert.equal(lastNotification(ctx).message, "pi-ghost-vim debug disabled");
-    assert.equal(ctx.ui.widgets.at(-1)?.key, "pi-ghost-vim-debug");
+    assert.equal(lastNotification(ctx).message, "pi-autocomplete debug disabled");
+    assert.equal(ctx.ui.widgets.at(-1)?.key, "pi-autocomplete-debug");
     assert.equal(ctx.ui.widgets.at(-1)?.value, undefined);
   } finally {
     cleanupTempAgentDir(dir);
@@ -308,7 +308,7 @@ test("/ac trace reports the central location and toggles recording", async () =>
   const dir = useTempAgentDir();
   try {
     const { pi, commands } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     const command = getAcCommand(commands);
     const ctx = createMockContext();
@@ -343,7 +343,7 @@ test("/ac getArgumentCompletions returns expected suggestions", async () => {
   const dir = useTempAgentDir();
   try {
     const { pi, commands } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     const command = getAcCommand(commands);
     assert.ok(command.getArgumentCompletions, "expected getArgumentCompletions to be defined");
@@ -425,7 +425,7 @@ test("/ac model default updates default model and last used model persists", asy
   const dir = useTempAgentDir();
   try {
     const { pi, commands, sessionHandlers } = createMockPi();
-    ghostVim(pi as never);
+    autocompleteVim(pi as never);
 
     const command = getAcCommand(commands);
     const ctx = createMockContext();
@@ -456,18 +456,18 @@ test("/ac model default updates default model and last used model persists", asy
 
 type TraceEnv = {
   dir: string;
-  config: GhostConfig;
+  config: AutocompleteConfig;
   tracker: CompletionTraceTracker;
 };
 
-function createTraceEnv(overrides: Partial<GhostConfig> = {}): TraceEnv {
+function createTraceEnv(overrides: Partial<AutocompleteConfig> = {}): TraceEnv {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-ac-traces-"));
-  const config: GhostConfig = { ...baseTestConfig, trace: true, traceDir: dir, ...overrides };
+  const config: AutocompleteConfig = { ...baseTestConfig, trace: true, traceDir: dir, ...overrides };
   return { dir, config, tracker: new CompletionTraceTracker(new TraceRecorder(config)) };
 }
 
 function createDraft(
-  config: GhostConfig,
+  config: AutocompleteConfig,
   prefix: string,
   raw: string,
   overrides: Partial<CompletionTraceDraft> = {},
@@ -763,11 +763,11 @@ function stubOllama(response: string): () => void {
   };
 }
 
-test("typing, showing and accepting ghost text produces a trace end to end", async () => {
+test("typing, showing and accepting autocomplete text produces a trace end to end", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-ac-traces-"));
   const restoreFetch = stubOllama(" keeps the model idle");
   try {
-    const config: GhostConfig = {
+    const config: AutocompleteConfig = {
       ...baseTestConfig,
       model: "gemma4:e4b",
       promptMode: "instruct",
@@ -776,7 +776,7 @@ test("typing, showing and accepting ghost text produces a trace end to end", asy
       traceDir: dir,
     };
     const baseEditor = new MockBaseEditor();
-    const wrapper = new GhostVimWrapper({
+    const wrapper = new AutocompleteVimWrapper({
       ctx: {
         ui: {
           theme: { fg: (_style: string, text: string) => text },
@@ -798,7 +798,7 @@ test("typing, showing and accepting ghost text produces a trace end to end", asy
     for (const char of typed) wrapper.handleInput(char);
     await new Promise((resolve) => setTimeout(resolve, 120));
 
-    // Tab accepts the first chunk of the visible ghost.
+    // Tab accepts the first chunk of the visible autocomplete.
     wrapper.handleInput("\t");
     assert.equal(baseEditor.getText(), `${typed} keeps`);
 
@@ -835,7 +835,7 @@ test("typing, showing and accepting ghost text produces a trace end to end", asy
 });
 
 test("LFM2.5 models resolve to the prefill prompt mode and raw generation", () => {
-  const base: GhostConfig = { ...baseTestConfig, promptMode: "auto" };
+  const base: AutocompleteConfig = { ...baseTestConfig, promptMode: "auto" };
 
   for (const model of ["LFM25:2.6b", "lfm2.5:2.6b", "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q8_0"]) {
     assert.equal(resolvePromptMode({ ...base, model }), "lfm-prefill", model);
