@@ -7,11 +7,14 @@ import {
   type Focusable,
 } from "@earendil-works/pi-tui";
 import { GHOST_FACTORY_MARKER } from "./constants.js";
-import { DebugTraceWriter } from "./debug-trace.js";
 import { debugText, takeNextChunk } from "./completion.js";
 import { describePromptMode } from "./config.js";
 import { injectGhostAfterCursor } from "./inline-ghost.js";
 import { OllamaPredictor, PredictionController } from "./prediction-controller.js";
+import {
+  CompletionTraceTracker,
+  type EditorContextSnapshot,
+} from "./trace-recorder.js";
 import type {
   ActionHandler,
   DebugTraceDetails,
@@ -30,7 +33,7 @@ export type GhostEditorFactory = EditorFactory & {
 export class GhostVimWrapper implements EditorComponent, Focusable {
   public readonly actionHandlers: Map<string, ActionHandler>;
 
-  public readonly traceWriter: DebugTraceWriter;
+  public readonly traces: CompletionTraceTracker;
   private ghost: GhostState | null = null;
   private lastTabAt = 0;
   private ownFocused = false;
@@ -43,7 +46,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   private _submitHandler: ((text: string) => void) | undefined;
 
   constructor(private readonly opts: GhostWrapperOptions) {
-    this.traceWriter = new DebugTraceWriter(opts.config);
+    this.traces = new CompletionTraceTracker(opts.recorder);
     this.actionHandlers = new ForwardingActionHandlersMap(
       () => this.opts.baseEditor.actionHandlers,
     );
@@ -53,11 +56,13 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       getText: () => this.getText(),
       getBlockReason: () => this.getPredictionBlockReason(),
       debug: (message, details) => this.debug(message, details),
-      onPrediction: (ghost) => {
+      onPrediction: (ghost, trace) => {
         this.ghost = ghost;
+        this.traces.recordShown(trace, ghost.text);
         this.showGhostPreview(ghost.text);
         this.requestRender();
       },
+      onTrace: (trace) => this.traces.recordUnshown(trace),
     });
 
     if (this.opts.baseEditor.onSubmit) {
@@ -129,7 +134,8 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
   set onSubmit(handler: ((text: string) => void) | undefined) {
     if (handler) {
       this._submitHandler = (text: string) => {
-        this.traceWriter.close();
+        // The submitted text is the ground truth every open suggestion was predicting.
+        this.traces.noteSubmit(text);
         handler(text);
       };
       this.opts.baseEditor.onSubmit = this._submitHandler;
@@ -184,7 +190,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     }
 
     if (!this.isInsertMode()) {
-      this.invalidateGhostAndPrediction();
+      this.invalidateGhostAndPrediction("mode-change");
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
       return;
@@ -200,7 +206,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     }
 
     if (isTab) {
-      this.invalidateGhostAndPrediction();
+      this.invalidateGhostAndPrediction("tab");
       this.lastTabAt = 0;
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
@@ -209,12 +215,12 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
 
     if (isEscape) {
       if (this.hasValidGhost()) {
-        this.invalidateGhostAndPrediction();
+        this.invalidateGhostAndPrediction("escape");
         this.requestRender();
         return;
       }
 
-      this.invalidateGhostAndPrediction();
+      this.invalidateGhostAndPrediction("escape");
       this.opts.baseEditor.handleInput?.(data);
       this.requestRender();
       return;
@@ -223,7 +229,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     this.lastTabAt = 0;
 
     const before = this.getText();
-    this.invalidateGhostAndPrediction();
+    this.invalidateGhostAndPrediction("typing");
 
     this.opts.baseEditor.handleInput?.(data);
 
@@ -237,7 +243,8 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
         before,
         after,
       });
-      this.schedulePrediction(after);
+      this.traces.noteText(after);
+      this.schedulePrediction(after, data);
     } else {
       this.traceFileOnly("input: no text change", {
         event: "editor-no-text-change",
@@ -257,8 +264,8 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     if (this.disposed) return;
     this.disposed = true;
     this.predictions.dispose();
-    this.clearGhost();
-    this.traceWriter.close();
+    this.clearGhost("dispose");
+    this.traces.flush("dispose");
     this.opts.baseEditor.dispose?.();
   }
 
@@ -277,7 +284,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
         maxTokens: this.opts.config.maxTokens,
       },
     );
-    this.invalidateGhostAndPrediction();
+    this.invalidateGhostAndPrediction("config-change");
     this.requestRender();
   }
 
@@ -407,6 +414,8 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       rest,
     });
     this.setText(nextText);
+    this.traces.noteText(nextText);
+    this.traces.noteAccept(take, rest);
 
     if (rest.length > 0) {
       this.ghost = {
@@ -418,40 +427,59 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
       return true;
     }
 
-    this.clearGhost();
+    this.clearGhost("accept");
     return false;
   }
 
   private acceptWholeGhost(): void {
     if (!this.ghost) return;
 
-    this.opts.debug(`accept: whole ${this.ghost.text.length} chars`, {
+    const accepted = this.ghost.text;
+    this.opts.debug(`accept: whole ${accepted.length} chars`, {
       event: "ghost-accept-whole",
-      ghostLength: this.ghost.text.length,
-      ghostText: this.ghost.text,
+      ghostLength: accepted.length,
+      ghostText: accepted,
     });
-    this.setText(this.getText() + this.ghost.text);
-    this.clearGhost();
+    const nextText = this.getText() + accepted;
+    this.setText(nextText);
+    this.traces.noteText(nextText);
+    this.traces.noteAccept(accepted, "");
+    this.clearGhost("accept");
   }
 
-  private schedulePrediction(text: string): void {
-    this.predictions.schedule(text);
+  private schedulePrediction(text: string, trigger: string): void {
+    this.predictions.schedule(text, this.snapshotContext(trigger));
   }
 
-  private invalidateGhostAndPrediction(): void {
-    this.clearGhost();
+  /** Editor state at the keystroke that triggered a prediction, for the trace record. */
+  private snapshotContext(trigger: string): EditorContextSnapshot {
+    const cursor = this.opts.baseEditor.getCursor?.call(this.opts.baseEditor);
+    const lines = this.opts.baseEditor.getLines?.() ?? this.getText().split("\n");
+
+    return {
+      line: Number.isInteger(cursor?.line) ? cursor!.line : null,
+      col: Number.isInteger(cursor?.col) ? cursor!.col : null,
+      lines: lines.length,
+      trigger: describeInput(trigger),
+    };
+  }
+
+  private invalidateGhostAndPrediction(reason: string): void {
+    this.clearGhost(reason);
     this.predictions.invalidate();
   }
 
-  private clearGhost(): void {
+  private clearGhost(reason: string): void {
     if (this.ghost) {
       this.traceFileOnly(`clear: ghost #${this.ghost.requestId}`, {
         event: "ghost-clear",
         requestId: this.ghost.requestId,
+        reason,
         ghostLength: this.ghost.text.length,
         ghostText: this.ghost.text,
       });
     }
+    this.traces.noteDismiss(reason);
     this.ghost = null;
     this.clearGhostPreview();
   }
@@ -499,8 +527,7 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
 
   private debug(message: string, details?: DebugTraceDetails): void {
     if (!this.shouldTraceFileOnly()) return;
-    this.traceWriter.write(message, details);
-    this.opts.debug(message, { ...details, skipSessionTrace: true });
+    this.opts.debug(message, details);
   }
 
   private dim(text: string): string {
@@ -511,6 +538,16 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     this.opts.baseEditor.invalidate();
     this.opts.tui.requestRender?.();
   }
+}
+
+/**
+ * Renders the triggering keystroke for a trace record: printable input as itself, control
+ * sequences as an escaped preview so a stray escape code cannot corrupt the JSONL line.
+ */
+function describeInput(data: string): string {
+  if (!data) return "";
+  if (/^[\x20-\x7e]+$/.test(data)) return data.slice(0, 8);
+  return JSON.stringify(data).slice(0, 20);
 }
 
 class ForwardingActionHandlersMap extends Map<string, ActionHandler> {

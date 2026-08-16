@@ -9,6 +9,7 @@ import type {
   Focusable,
   TUI,
 } from "@earendil-works/pi-tui";
+import type { TraceRecorder } from "./trace-recorder.js";
 
 export type PromptMode = "auto" | "qwen-fim" | "instruct" | "lfm-prefill";
 export type ResolvedPromptMode = Exclude<PromptMode, "auto">;
@@ -33,7 +34,10 @@ export type GhostConfig = {
   maxTokens: number;
   inline: boolean;
   debug: boolean;
-  debugTraceFile: string;
+  /** Records completion traces (accepted/rejected outcomes) to the daily JSONL file. */
+  trace: boolean;
+  /** Central directory holding the daily trace and debug files. */
+  traceDir: string;
 };
 
 export type GhostState = {
@@ -53,6 +57,7 @@ export type PersistentConfig = {
   defaultPromptMode?: PromptMode;
   lastUsedModel?: string;
   lastUsedPromptMode?: PromptMode;
+  traceEnabled?: boolean;
 };
 
 export type ModeProvider = () => string;
@@ -96,6 +101,7 @@ export type GhostWrapperOptions = {
   baseEditor: GhostBaseEditor;
   getExternalMode: ModeProvider;
   config: GhostConfig;
+  recorder: TraceRecorder;
   debug: DebugLogger;
   isDebugEnabled?: () => boolean;
 };

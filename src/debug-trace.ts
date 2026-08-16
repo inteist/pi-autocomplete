@@ -1,31 +1,47 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describePromptMode, resolvePromptMode } from "./config.js";
+import { resolvePromptMode } from "./config.js";
+import { DEBUG_FILE_PREFIX } from "./trace-schema.js";
+import { getDailyTraceFile, safeJsonReplacer } from "./trace-writer.js";
 import type { DebugTraceDetails, GhostConfig } from "./types.js";
 import { formatError } from "./utils.js";
 
 /**
- * JSONL trace writer used only while `/ac debug` or PI_GHOST_DEBUG is enabled.
- * It appends structured traces to disk so autocomplete latency, prompt payloads,
- * model timings, cleanup, and rejection decisions can be inspected after a run.
+ * Verbose event stream, written only while `/ac debug` or `PI_GHOST_DEBUG` is enabled.
+ *
+ * This is the debugging companion of the completion traces, not a replacement for them:
+ * one line per internal event (schedule, skip, request, response, cleanup, accept), which
+ * is what you want when chasing why a specific ghost did or did not appear, and far too
+ * noisy to keep as a corpus. It lives in `<trace dir>/debug/` so both end up in one place.
+ *
+ * Buffered through a stream because it writes on the keystroke path; the completion traces
+ * use synchronous appends instead. Tracing must never break editor input, so a failing
+ * file is dropped rather than retried.
  */
+/** Today's verbose debug file, kept next to the completion traces. */
+export function getDebugTraceFile(config: GhostConfig, now = new Date()): string {
+  return getDailyTraceFile(path.join(config.traceDir, "debug"), DEBUG_FILE_PREFIX, now);
+}
+
 export class DebugTraceWriter {
   private stream: fs.WriteStream | null = null;
   private streamPath: string | null = null;
   private failedPath: string | null = null;
+  private seq = 0;
 
-  constructor(private readonly config: GhostConfig) {}
+  constructor(
+    private readonly config: GhostConfig,
+    private readonly sessionId: string,
+  ) {}
 
+  /** Today's debug file. Rolls over at midnight without restarting the session. */
   get filePath(): string {
-    return this.streamPath || this.config.debugTraceFile;
+    return getDebugTraceFile(this.config);
   }
 
   write(message: string, details?: DebugTraceDetails): void {
-    if (!this.streamPath) {
-      this.streamPath = this.getStampedPath(this.config.debugTraceFile);
-    }
-    const filePath = this.streamPath;
-    if (!filePath || this.failedPath === filePath) return;
+    const filePath = this.filePath;
+    if (this.failedPath === filePath) return;
 
     try {
       this.ensureStream(filePath);
@@ -49,27 +65,11 @@ export class DebugTraceWriter {
     }
   }
 
-  private getStampedPath(basePath: string): string {
-    const dir = path.dirname(basePath);
-    const ext = path.extname(basePath);
-    const base = path.basename(basePath, ext);
-
-    const now = new Date();
-    const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-    const dateStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-    const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${pad(now.getMilliseconds(), 3)}`;
-    const timestamp = `${dateStr}-${timeStr}`;
-
-    return path.join(dir, `${base}-${timestamp}.md`);
-  }
-
   private ensureStream(filePath: string): void {
     if (this.stream && this.streamPath === filePath) return;
 
     this.close();
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-    const exists = fs.existsSync(filePath);
 
     const stream = fs.createWriteStream(filePath, {
       flags: "a",
@@ -84,68 +84,54 @@ export class DebugTraceWriter {
     this.streamPath = filePath;
     if (this.failedPath !== filePath) this.failedPath = null;
 
-    if (!exists) {
-      const frontmatter = this.getFrontmatter();
-      stream.write(frontmatter);
-    }
+    // A day file holds several sessions, so every segment opens with the config that
+    // produced the events after it.
+    stream.write(`${this.serialize("debug: trace file opened", this.getOpenDetails())}\n`);
   }
 
-  private getFrontmatter(): string {
-    const lines = [
-      "---",
-      `model: ${this.config.model}`,
-      `promptMode: ${this.config.promptMode}`,
-      `resolvedPromptMode: ${resolvePromptMode(this.config)}`,
-      `ollamaUrl: ${this.config.ollamaUrl}`,
-      `keepAlive: ${this.config.keepAlive}`,
-      `debounceMs: ${this.config.debounceMs}`,
-      `timeoutMs: ${this.config.timeoutMs}`,
-      `checkTimeoutMs: ${this.config.checkTimeoutMs}`,
-      `doubleTabMs: ${this.config.doubleTabMs}`,
-      `minChars: ${this.config.minChars}`,
-      `maxTokens: ${this.config.maxTokens}`,
-      `inline: ${this.config.inline}`,
-      "---",
-      "",
-      "",
-    ];
-    return lines.join("\n");
+  private getOpenDetails(): DebugTraceDetails {
+    return {
+      event: "debug-open",
+      model: this.config.model,
+      promptMode: this.config.promptMode,
+      resolvedPromptMode: resolvePromptMode(this.config),
+      ollamaUrl: this.config.ollamaUrl,
+      keepAlive: this.config.keepAlive,
+      debounceMs: this.config.debounceMs,
+      timeoutMs: this.config.timeoutMs,
+      checkTimeoutMs: this.config.checkTimeoutMs,
+      doubleTabMs: this.config.doubleTabMs,
+      minChars: this.config.minChars,
+      maxTokens: this.config.maxTokens,
+      inline: this.config.inline,
+      trace: this.config.trace,
+      traceDir: this.config.traceDir,
+    };
   }
 
   private serialize(message: string, details?: DebugTraceDetails): string {
-    const time = new Date().toLocaleTimeString();
-    let line = `[${time}] ${message}`;
-
-    const cleanDetails = sanitizeDetails(details);
-    if (cleanDetails && Object.keys(cleanDetails).length > 0) {
-      try {
-        const jsonDetails = JSON.stringify(cleanDetails, safeTraceJsonReplacer);
-        line += ` ${jsonDetails}`;
-      } catch (error) {
-        line += ` { "error": "Serialization failed: ${formatError(error)}" }`;
-      }
-    }
-    return line;
-  }
-}
-
-function sanitizeDetails(
-  details: DebugTraceDetails | undefined,
-): Record<string, unknown> | undefined {
-  if (!details) return undefined;
-  const { fileOnly: _fileOnly, ...rest } = details;
-  return Object.keys(rest).length > 0 ? rest : undefined;
-}
-
-function safeTraceJsonReplacer(_key: string, value: unknown): unknown {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "function") return "[function]";
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
+    this.seq += 1;
+    const { fileOnly: _fileOnly, event, ...rest } = details ?? {};
+    const record = {
+      ts: new Date().toISOString(),
+      session_id: this.sessionId,
+      seq: this.seq,
+      event: typeof event === "string" ? event : "debug",
+      msg: message,
+      ...rest,
     };
+
+    try {
+      return JSON.stringify(record, safeJsonReplacer);
+    } catch (error) {
+      return JSON.stringify({
+        ts: record.ts,
+        session_id: record.session_id,
+        seq: record.seq,
+        event: record.event,
+        msg: message,
+        error: `Serialization failed: ${formatError(error)}`,
+      });
+    }
   }
-  return value;
 }

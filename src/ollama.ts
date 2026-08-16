@@ -6,6 +6,21 @@ import { formatError, previewForLine } from "./utils.js";
 export type OllamaTraceContext = {
   requestId: number;
   debug: DebugLogger;
+  /**
+   * Called with the built request before it is sent. The trace record needs the exact
+   * prompt even when the call later fails, and rebuilding it in the error path would
+   * risk recording a prompt that differs from the one that was actually sent.
+   */
+  onRequest?: (request: OllamaGenerateRequest) => void;
+};
+
+export type OllamaPredictionResult = {
+  /** Untouched model output. */
+  response: string;
+  request: OllamaGenerateRequest;
+  metrics: Record<string, unknown>;
+  status: number;
+  elapsedMs: number;
 };
 
 export async function predictWithOllama(
@@ -14,9 +29,10 @@ export async function predictWithOllama(
   signal: AbortSignal,
   config: GhostConfig,
   trace?: OllamaTraceContext,
-): Promise<string> {
+): Promise<OllamaPredictionResult> {
   const url = `${config.ollamaUrl}/api/generate`;
   const request = buildGenerateRequest(before, after, config, config.maxTokens);
+  trace?.onRequest?.(request);
   const requestBody = JSON.stringify(request);
   const resolvedPromptMode = resolvePromptMode(config);
   const startedAt = Date.now();
@@ -100,7 +116,7 @@ export async function predictWithOllama(
     },
   );
 
-  return response;
+  return { response, request, metrics, status: res.status, elapsedMs: elapsed };
 }
 
 export type OllamaGenerateRequest = {

@@ -44,9 +44,14 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
         description: "Verify Ollama connection"
       },
       {
+        value: "trace",
+        label: "trace",
+        description: "Show or toggle trace recording"
+      },
+      {
         value: "debug",
         label: "debug",
-        description: "Toggle debug widget & tracing"
+        description: "Toggle debug widget & event stream"
       },
       {
         value: "alias",
@@ -151,18 +156,49 @@ export function getAcArgumentCompletions(prefix: string): AutocompleteItem[] | n
         {
           value: "on",
           label: "on",
-          description: "Enable debug widget & tracing"
+          description: "Enable debug widget & event stream"
         },
         {
           value: "off",
           label: "off",
-          description: "Disable debug widget & tracing"
+          description: "Disable debug widget & event stream"
         }
       ];
       const filtered = options
         .filter((o) => o.value.startsWith(val))
         .map((o) => ({
           value: `debug ${o.value}`,
+          label: o.label,
+          description: o.description
+        }));
+      return filtered.length > 0 ? filtered : null;
+    }
+  }
+
+  if (subcommand === "trace") {
+    if (subArgs.length === 1) {
+      const val = subArgs[0].toLowerCase();
+      const options = [
+        {
+          value: "status",
+          label: "status",
+          description: "Show trace location and today's counts"
+        },
+        {
+          value: "on",
+          label: "on",
+          description: "Record completion traces"
+        },
+        {
+          value: "off",
+          label: "off",
+          description: "Stop recording completion traces"
+        }
+      ];
+      const filtered = options
+        .filter((o) => o.value.startsWith(val))
+        .map((o) => ({
+          value: `trace ${o.value}`,
           label: o.label,
           description: o.description
         }));

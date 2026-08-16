@@ -10,6 +10,7 @@ import {
   MODEL_SELECTION_ENTRY_TYPE,
   PROMPT_MODES,
 } from "./constants.js";
+import { getTraceDir } from "./trace-writer.js";
 import type {
   GhostConfig,
   PromptMode,
@@ -99,6 +100,12 @@ export function saveActiveModel(model: string, promptMode: PromptMode): void {
   const pConfig = loadPersistentConfig();
   pConfig.lastUsedModel = model;
   pConfig.lastUsedPromptMode = promptMode;
+  writePersistentConfig(pConfig);
+}
+
+export function saveTraceEnabled(enabled: boolean): void {
+  const pConfig = loadPersistentConfig();
+  pConfig.traceEnabled = enabled;
   writePersistentConfig(pConfig);
 }
 
@@ -201,7 +208,10 @@ export function readConfigFromEnv(): GhostConfig {
     maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
     inline: envBool("PI_GHOST_INLINE", true),
     debug: envBool("PI_GHOST_DEBUG", false),
-    debugTraceFile: readDebugTraceFilePath(),
+    // Traces are the learning corpus rather than a debugging aid, so they are on unless
+    // switched off - a trace that was never recorded cannot be analysed later.
+    trace: envBool("PI_AC_TRACE", pConfig.traceEnabled ?? true),
+    traceDir: getTraceDir(),
   };
 }
 
@@ -211,22 +221,6 @@ function envNumber(name: string, fallback: number): number {
 
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-export function readDebugTraceFilePath(): string {
-  const trimmed = [
-    process.env.PI_GHOST_DEBUG_FILE,
-    process.env.PI_GHOST_TRACE_FILE,
-    process.env.PI_GHOST_DEBUG_TRACE_FILE,
-  ]
-    .map((value) => value?.trim())
-    .find((value): value is string => !!value);
-
-  if (trimmed) {
-    return path.isAbsolute(trimmed) ? trimmed : path.resolve(trimmed);
-  }
-
-  return path.join(getAgentDir(), "pi-ghost-vim-debug.jsonl");
 }
 
 export function envBool(name: string, fallback: boolean): boolean {
