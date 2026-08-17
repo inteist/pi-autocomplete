@@ -12,14 +12,14 @@ import {
 } from "./constants.js";
 import { getTraceDir } from "./trace-writer.js";
 import type {
-  GhostConfig,
+  AutocompleteConfig,
   PromptMode,
   ResolvedPromptMode,
   StoredModelSelection,
   PersistentConfig,
 } from "./types.js";
 
-export function describePromptMode(config: GhostConfig): string {
+export function describePromptMode(config: AutocompleteConfig): string {
   const resolved = resolvePromptMode(config);
   return config.promptMode === "auto" ? `${resolved} (auto)` : resolved;
 }
@@ -29,7 +29,7 @@ export function describePromptMode(config: GhostConfig): string {
  * it infers the mode from the model name (Qwen coder models use `"qwen-fim"`,
  * Liquid LFM models use `"lfm-prefill"`, others default to `"instruct"`).
  */
-export function resolvePromptMode(config: GhostConfig): ResolvedPromptMode {
+export function resolvePromptMode(config: AutocompleteConfig): ResolvedPromptMode {
   if (config.promptMode !== "auto") return config.promptMode;
 
   const model = config.model.toLowerCase();
@@ -122,7 +122,7 @@ export function saveDefaultModel(model: string, promptMode: PromptMode): void {
  * Helper to copy config settings from a source to a target object in place.
  * Mutating the object in place ensures wrappers holding the reference stay updated.
  */
-export function replaceConfig(target: GhostConfig, source: GhostConfig): void {
+export function replaceConfig(target: AutocompleteConfig, source: AutocompleteConfig): void {
   Object.assign(target, source);
 }
 
@@ -130,7 +130,7 @@ export function replaceConfig(target: GhostConfig, source: GhostConfig): void {
  * Applies a stored model selection structure to the active config object.
  */
 export function applyStoredModelSelection(
-  config: GhostConfig,
+  config: AutocompleteConfig,
   selection: StoredModelSelection | null,
 ): void {
   if (!selection) return;
@@ -185,10 +185,10 @@ export function parseStoredModelSelection(data: unknown): StoredModelSelection |
   };
 }
 
-export function readConfigFromEnv(): GhostConfig {
+export function readConfigFromEnv(): AutocompleteConfig {
   const pConfig = loadPersistentConfig();
-  const defaultModel = pConfig.defaultModel ?? process.env.PI_GHOST_MODEL ?? DEFAULT_MODEL;
-  const defaultPromptMode = pConfig.defaultPromptMode ?? readPromptMode(process.env.PI_GHOST_PROMPT_MODE);
+  const defaultModel = pConfig.defaultModel ?? process.env.PI_AUTOCOMPLETE_MODEL ?? DEFAULT_MODEL;
+  const defaultPromptMode = pConfig.defaultPromptMode ?? readPromptMode(process.env.PI_AUTOCOMPLETE_PROMPT_MODE);
 
   const model = pConfig.lastUsedModel ?? defaultModel;
   const promptMode = pConfig.lastUsedPromptMode ?? defaultPromptMode;
@@ -197,17 +197,17 @@ export function readConfigFromEnv(): GhostConfig {
     model,
     promptMode,
     ollamaUrl: normalizeBaseUrl(
-      process.env.PI_GHOST_OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
+      process.env.PI_AUTOCOMPLETE_OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
     ),
-    keepAlive: process.env.PI_GHOST_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE,
-    debounceMs: envNumber("PI_GHOST_DEBOUNCE_MS", 250),
-    timeoutMs: envNumber("PI_GHOST_TIMEOUT_MS", 2500),
-    checkTimeoutMs: envNumber("PI_GHOST_CHECK_TIMEOUT_MS", DEFAULT_CHECK_TIMEOUT_MS),
-    doubleTabMs: envNumber("PI_GHOST_DOUBLE_TAB_MS", 350),
-    minChars: envNumber("PI_GHOST_MIN_CHARS", 8),
-    maxTokens: envNumber("PI_GHOST_MAX_TOKENS", 48),
-    inline: envBool("PI_GHOST_INLINE", true),
-    debug: envBool("PI_GHOST_DEBUG", false),
+    keepAlive: process.env.PI_AUTOCOMPLETE_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE,
+    debounceMs: envNumber("PI_AUTOCOMPLETE_DEBOUNCE_MS", 250),
+    timeoutMs: envNumber("PI_AUTOCOMPLETE_TIMEOUT_MS", 2500),
+    checkTimeoutMs: envNumber("PI_AUTOCOMPLETE_CHECK_TIMEOUT_MS", DEFAULT_CHECK_TIMEOUT_MS),
+    doubleTabMs: envNumber("PI_AUTOCOMPLETE_DOUBLE_TAB_MS", 350),
+    minChars: envNumber("PI_AUTOCOMPLETE_MIN_CHARS", 8),
+    maxTokens: envNumber("PI_AUTOCOMPLETE_MAX_TOKENS", 48),
+    inline: envBool("PI_AUTOCOMPLETE_INLINE", true),
+    debug: envBool("PI_AUTOCOMPLETE_DEBUG", false),
     // Traces are the learning corpus rather than a debugging aid, so they are on unless
     // switched off - a trace that was never recorded cannot be analysed later.
     trace: envBool("PI_AC_TRACE", pConfig.traceEnabled ?? true),

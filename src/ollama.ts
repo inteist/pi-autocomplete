@@ -1,6 +1,6 @@
 import { describePromptMode, resolvePromptMode } from "./config.js";
 import { cleanupCompletion, getCompletionRejectionReason } from "./completion.js";
-import type { DebugLogger, GhostConfig, ResolvedPromptMode } from "./types.js";
+import type { DebugLogger, AutocompleteConfig, ResolvedPromptMode } from "./types.js";
 import { formatError, previewForLine } from "./utils.js";
 
 export type OllamaTraceContext = {
@@ -27,7 +27,7 @@ export async function predictWithOllama(
   before: string,
   after: string,
   signal: AbortSignal,
-  config: GhostConfig,
+  config: AutocompleteConfig,
   trace?: OllamaTraceContext,
 ): Promise<OllamaPredictionResult> {
   const url = `${config.ollamaUrl}/api/generate`;
@@ -149,7 +149,7 @@ export type OllamaGenerateRequest = {
 export function buildGenerateRequest(
   before: string,
   after: string,
-  config: GhostConfig,
+  config: AutocompleteConfig,
   maxTokens: number,
 ): OllamaGenerateRequest {
   const promptMode = resolvePromptMode(config);
@@ -230,7 +230,7 @@ const LFM_SHOTS: ReadonlyArray<{ text: string; completion: string }> = [
     completion: "ines do not fire on every keystroke",
   },
   {
-    text: "the ghost preview flickers whenever",
+    text: "the autocomplete preview flickers whenever",
     completion: " the model returns an empty completion",
   },
   {
@@ -258,7 +258,7 @@ export function trimLfmPrefillEnd(text: string): string {
 function buildLfmTurn(ask: string, assistant: string, closed: boolean): string {
   // The chat template opens every assistant turn with `<think>`, because LFM2.5 always
   // reasons before answering. A pre-closed empty think block keeps that structure intact
-  // while skipping the reasoning itself, which is what makes short-latency ghost text
+  // while skipping the reasoning itself, which is what makes short-latency autocomplete text
   // possible at all: left to think, the model spends hundreds of tokens before answering.
   return (
     `<|im_start|>user\n${ask}<|im_end|>\n` +
@@ -485,11 +485,11 @@ function formatOllamaMetrics(metrics: Record<string, unknown>): string {
  * @returns An object with diagnostic success boolean and status lines to be shown to the user.
  */
 export async function runOllamaStatus(
-  config: GhostConfig,
+  config: AutocompleteConfig,
   promptArg: string,
 ): Promise<{ ok: boolean; lines: string[] }> {
   const lines = [
-    "pi-ghost-vim Ollama status",
+    "pi-autocomplete Ollama status",
     `url: ${config.ollamaUrl}`,
     `model: ${config.model}`,
     `prompt mode: ${describePromptMode(config)}`,

@@ -27,17 +27,17 @@ import {
 import { getDebugTraceFile } from "./debug-trace.js";
 import { TRACE_FILE_PREFIX } from "./trace-schema.js";
 import { getDailyTraceFile, summarizeTraceFile } from "./trace-writer.js";
-import type { GhostVimWrapper } from "./editor-wrapper.js";
+import type { AutocompleteVimWrapper } from "./editor-wrapper.js";
 import {
   formatAutocompleteModelStatus,
   parseAutocompleteModelCommand
 } from "./model-command.js";
 import { runOllamaStatus } from "./ollama.js";
-import type { DebugTraceDetails, GhostConfig } from "./types.js";
+import type { DebugTraceDetails, AutocompleteConfig } from "./types.js";
 import {
-  clearGhostWidget,
+  clearAutocompleteWidget,
   printOllamaStatusOutput,
-  setGhostWidget
+  setAutocompleteWidget
 } from "./ui.js";
 
 export type DebugState = {
@@ -47,8 +47,8 @@ export type DebugState = {
 
 export type RegisterAutocompleteCommandsOptions = {
   pi: ExtensionAPI;
-  config: GhostConfig;
-  wrappers: Set<GhostVimWrapper>;
+  config: AutocompleteConfig;
+  wrappers: Set<AutocompleteVimWrapper>;
   debugState: DebugState;
   emitDebug?: (
     ctx: ExtensionContext,
@@ -183,9 +183,9 @@ export function registerAutocompleteCommands({
       });
       debugState.enabled = false;
       debugState.history.length = 0;
-      clearGhostWidget(ctx, DEBUG_WIDGET_KEY);
+      clearAutocompleteWidget(ctx, DEBUG_WIDGET_KEY);
       onDebugStateChanged?.(false);
-      ctx.ui.notify("pi-ghost-vim debug disabled", "info");
+      ctx.ui.notify("pi-autocomplete debug disabled", "info");
       return;
     }
 
@@ -197,8 +197,8 @@ export function registerAutocompleteCommands({
       debugFile,
       fileOnly: true
     });
-    setGhostWidget(ctx, DEBUG_WIDGET_KEY, [
-      "pi-ghost-vim debug enabled",
+    setAutocompleteWidget(ctx, DEBUG_WIDGET_KEY, [
+      "pi-autocomplete debug enabled",
       `debug=${debugFile}`,
       `url=${config.ollamaUrl}`,
       `model=${config.model}`,
@@ -208,7 +208,7 @@ export function registerAutocompleteCommands({
     onDebugStateChanged?.(true);
     ctx.ui.notify(
       [
-        `pi-ghost-vim debug enabled`,
+        `pi-autocomplete debug enabled`,
         `debug file: ${debugFile}`,
         `trace file: ${getDailyTraceFile(config.traceDir, TRACE_FILE_PREFIX)}`
       ].join("\n"),
@@ -294,7 +294,7 @@ export function registerAutocompleteCommands({
 
       ctx.ui.notify(
         [
-          "pi-ghost-vim default model updated",
+          "pi-autocomplete default model updated",
           `default model: ${config.model}`,
           `prompt mode: ${describePromptMode(config)}`,
         ].join("\n"),
@@ -317,7 +317,7 @@ export function registerAutocompleteCommands({
 
     ctx.ui.notify(
       [
-        "pi-ghost-vim model updated",
+        "pi-autocomplete model updated",
         `model: ${config.model}`,
         `prompt mode: ${describePromptMode(config)}`,
         `run command: ollama run ${config.model}`,
@@ -447,7 +447,7 @@ ${aliases.map((a) => `  • ${a}`).join("\n")}`,
   };
 
   const handleAcStatus: CommandHandler = async (args, ctx) => {
-    ctx.ui.notify("pi-ghost-vim: checking Ollama status...", "info");
+    ctx.ui.notify("pi-autocomplete: checking Ollama status...", "info");
     const result = await runOllamaStatus(config, args.trim());
     printOllamaStatusOutput(ctx, result);
   };

@@ -20,7 +20,7 @@ import {
   type TypedSource,
 } from "./trace-schema.js";
 import { JsonlTraceWriter } from "./trace-writer.js";
-import type { GhostConfig, PromptMode, ResolvedPromptMode } from "./types.js";
+import type { AutocompleteConfig, PromptMode, ResolvedPromptMode } from "./types.js";
 
 /** Pending suggestions still waiting for an outcome, per editor. */
 const MAX_PENDING = 32;
@@ -84,7 +84,7 @@ export class TraceRecorder {
   private writer: JsonlTraceWriter | null = null;
   private writerDir: string | null = null;
 
-  constructor(private readonly config: GhostConfig) {}
+  constructor(private readonly config: AutocompleteConfig) {}
 
   get enabled(): boolean {
     return this.config.trace;
@@ -174,7 +174,7 @@ export class CompletionTraceTracker {
 
   constructor(private readonly recorder: TraceRecorder) {}
 
-  /** A suggestion that reached the screen as ghost text. */
+  /** A suggestion that reached the screen as autocomplete text. */
   recordShown(draft: CompletionTraceDraft, suggestion: string): void {
     const entry = this.push(draft, suggestion);
     if (!entry) return;
@@ -199,7 +199,7 @@ export class CompletionTraceTracker {
     if (draft.hint === "error") this.finalize(entry, "none");
   }
 
-  /** Tab accepted `taken` from the visible ghost, leaving `rest` of it on screen. */
+  /** Tab accepted `taken` from the visible autocomplete, leaving `rest` of it on screen. */
   noteAccept(taken: string, rest: string): void {
     const entry = this.active;
     if (!entry) return;
@@ -217,7 +217,7 @@ export class CompletionTraceTracker {
     }
   }
 
-  /** The visible ghost went away without being fully accepted. */
+  /** The visible autocomplete went away without being fully accepted. */
   noteDismiss(reason: string): void {
     const entry = this.active;
     this.active = null;
@@ -263,7 +263,7 @@ export class CompletionTraceTracker {
     if (!this.recorder.enabled) return null;
 
     this.stats.requests += 1;
-    // The previous ghost is gone as soon as a new answer lands.
+    // The previous autocomplete is gone as soon as a new answer lands.
     if (this.active) {
       this.active.reason = this.active.reason ?? "superseded";
       this.active = null;

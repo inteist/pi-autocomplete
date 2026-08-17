@@ -2,7 +2,7 @@ import {
   cleanupCompletion,
   debugText,
   getCompletionRejectionReason,
-  getGhostSuppressionReason,
+  getAutocompleteSuppressionReason,
 } from "./completion.js";
 import { resolvePromptMode } from "./config.js";
 import {
@@ -16,17 +16,17 @@ import {
   type CompletionTraceDraft,
   type EditorContextSnapshot,
 } from "./trace-recorder.js";
-import type { DebugLogger, GhostConfig, GhostState } from "./types.js";
+import type { DebugLogger, AutocompleteConfig, AutocompleteState } from "./types.js";
 import { formatError } from "./utils.js";
 
 export type PredictionControllerOptions = {
-  config: GhostConfig;
+  config: AutocompleteConfig;
   predictor: OllamaPredictor;
   getText: () => string;
   getBlockReason: () => string | null;
   debug: DebugLogger;
-  onPrediction: (ghost: GhostState, trace: CompletionTraceDraft) => void;
-  /** Every request that reached the model without producing visible ghost text. */
+  onPrediction: (autocomplete: AutocompleteState, trace: CompletionTraceDraft) => void;
+  /** Every request that reached the model without producing visible autocomplete text. */
   onTrace: (trace: CompletionTraceDraft) => void;
 };
 
@@ -42,7 +42,7 @@ export class PredictionController {
   schedule(baseText: string, context = emptyContextSnapshot()): void {
     const requestId = this.nextRequest();
 
-    const suppressionReason = getGhostSuppressionReason(
+    const suppressionReason = getAutocompleteSuppressionReason(
       baseText,
       this.opts.config.minChars,
     );
@@ -334,7 +334,7 @@ export class PredictionController {
 }
 
 export class OllamaPredictor {
-  constructor(private readonly config: GhostConfig) {}
+  constructor(private readonly config: AutocompleteConfig) {}
 
   async predict(
     before: string,

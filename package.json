@@ -1,7 +1,7 @@
 {
-  "name": "pi-ghost-vim",
+  "name": "pi-autocomplete",
   "version": "0.1.0",
-  "description": "Local Ollama ghost autocomplete wrapper for Pi prompt editors, compatible with pi-vim/pi-vim-mode.",
+  "description": "Local Ollama autocomplete wrapper for Pi prompt editors, compatible with pi-vim/pi-vim-mode.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -9,7 +9,7 @@
     "pi",
     "vim",
     "autocomplete",
-    "ghost-text",
+    "inline-completion",
     "ollama"
   ],
   "license": "MIT",
