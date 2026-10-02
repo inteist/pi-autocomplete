@@ -5,6 +5,8 @@ import {
   type AutocompleteProvider,
   type EditorComponent,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { GHOST_FACTORY_MARKER } from "./constants.js";
 import { DebugTraceWriter } from "./debug-trace.js";
@@ -169,6 +171,20 @@ export class GhostVimWrapper implements EditorComponent, Focusable {
     return injectGhostAfterCursor(lines, this.ghost!.text, width, (text) =>
       this.dim(text),
     );
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const isCursorClick = event.type === "click" && event.button === "left";
+    if (isCursorClick) {
+      this.lastTabAt = 0;
+      this.invalidateGhostAndPrediction();
+    }
+
+    // This wrapper is Pi's mouse target, not the wrapped vim editor. Preserve
+    // the base result so unhandled drags/wheels still select text and scroll.
+    const result = this.opts.baseEditor.handleMouse?.(event);
+    if (isCursorClick) this.requestRender();
+    return result;
   }
 
   handleInput(data: string): void {
