@@ -6,6 +6,9 @@ The extension asks local Ollama for end-of-prompt completions and only intercept
 
 ## Requirements
 
+Pi 0.87.1 or newer. Mouse cursor positioning requires Pi's
+`"tuiMode": "fullscreen"` setting; regular mode leaves mouse input to the terminal.
+
 ```bash
 # Default model
 ollama pull gemma4:e4b
@@ -62,6 +65,9 @@ Primary command namespace:
 - `Tab` again within 350ms accepts the remaining prediction.
 - `Tab` without a visible ghost is delegated to Pi/pi-vim.
 - `Escape`, normal typing, cursor movement, or leaving insert mode clears the ghost.
+- Mouse events are forwarded to the wrapped editor in both insert and normal mode.
+  Left clicks clear ghost text and cancel pending predictions; unhandled drags and
+  wheel events remain available for Pi's selection and scrolling.
 - Slash commands, `@` mentions, and likely path tokens suppress local ghost predictions.
 
 The extension renders a dim below-editor preview and also attempts best-effort inline ghost rendering using Pi TUI's cursor marker. Set `PI_GHOST_INLINE=0` to disable inline injection.
